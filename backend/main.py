@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.routers import chat
 from backend.core.config import settings
+from backend.routers import chat, investigate
 
 app = FastAPI(
     title=settings.app_name,
@@ -17,6 +17,7 @@ app.add_middleware(
 )
 
 app.include_router(chat.router)
+app.include_router(investigate.router) 
 
 @app.get("/health")
 async def health():

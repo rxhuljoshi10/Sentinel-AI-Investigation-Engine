@@ -41,3 +41,60 @@ async def stream_investigation(message: str):
                             yield token
                     except json.JSONDecodeError:
                         continue
+
+async def analyze_log(log_content: str) -> dict:
+    """
+    Sends log content to Ollama and returns a structured investigation report.
+    """
+
+    system_prompt = """You are Sentinel, an expert incident investigation AI.
+Analyze the provided log content and respond with ONLY a valid JSON object.
+No explanation. No markdown. No code blocks. Raw JSON only.
+
+You must use exactly these keys:
+- severity: one of "critical", "high", "medium", "low"
+- affected_service: name of the service or component causing the issue
+- probable_cause: one clear sentence describing the root cause
+- evidence: list of 2-4 specific log lines or patterns that support your finding
+- immediate_actions: list of 2-4 concrete steps to resolve the issue
+- confidence: float between 0.0 and 1.0 representing your confidence
+
+Example format:
+{
+  "severity": "critical",
+  "affected_service": "payment-service",
+  "probable_cause": "Database connection pool exhausted due to connection leak",
+  "evidence": [
+    "ERROR: Connection pool timeout after 30000ms",
+    "WARN: Active connections: 100/100"
+  ],
+  "immediate_actions": [
+    "Restart the payment service to release connections",
+    "Increase connection pool size in application config"
+  ],
+  "confidence": 0.85
+}"""
+
+    payload = {
+        "model": settings.ollama_model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Analyze this log:\n\n{log_content}"}
+        ],
+        "stream": False,
+        "options": {
+            "num_predict": 500,
+            "temperature": 0.3,
+            "num_ctx": 2048
+        }
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        response = await client.post(
+            f"{settings.ollama_base_url}/api/chat",
+            json=payload
+        )
+        response.raise_for_status()
+        data = response.json()
+        content = data["message"]["content"].strip()
+        return content                    
