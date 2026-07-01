@@ -1,4 +1,5 @@
 from pydantic import BaseModel, field_validator
+from datetime import datetime
 
 class ChatRequest(BaseModel):
     message: str
@@ -8,12 +9,12 @@ class ChatResponse(BaseModel):
     model: str
 
 class InvestigationReport(BaseModel):
-    severity: str                    # critical / high / medium / low
-    affected_service: str            # which service is broken
-    probable_cause: str              # root cause hypothesis
-    evidence: list[str]              # log lines that support the finding
-    immediate_actions: list[str]     # what to do right now
-    confidence: float                # 0.0 to 1.0
+    severity: str
+    affected_service: str
+    probable_cause: str
+    evidence: list[str]
+    immediate_actions: list[str]
+    confidence: float
 
     @field_validator("severity")
     @classmethod
@@ -29,3 +30,24 @@ class InvestigationReport(BaseModel):
         if not 0.0 <= v <= 1.0:
             raise ValueError("confidence must be between 0.0 and 1.0")
         return v
+
+# NEW models below
+
+class StoredIncident(BaseModel):
+    id: str
+    log_content: str
+    report: InvestigationReport
+    created_at: datetime
+
+class SimilarIncident(BaseModel):
+    id: str
+    similarity_score: float
+    affected_service: str
+    probable_cause: str
+    immediate_actions: list[str]
+    created_at: datetime
+
+class EnrichedReport(BaseModel):
+    report: InvestigationReport
+    similar_incidents: list[SimilarIncident]
+    context_used: bool

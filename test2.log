@@ -1,0 +1,6 @@
+2024-01-16 14:22:01 INFO  payment-service Processing transactions
+2024-01-16 14:23:15 WARN  payment-service DB connection pool at 90% (90/100)
+2024-01-16 14:23:45 ERROR payment-service Connection pool full (100/100)
+2024-01-16 14:23:46 ERROR payment-service SQLException: Timeout acquiring connection
+2024-01-16 14:23:47 ERROR payment-service HTTP 500 /api/payments/refund
+2024-01-16 14:24:00 ERROR payment-service Circuit breaker OPEN

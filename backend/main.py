@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.core.config import settings
-from backend.routers import chat, investigate
+from backend.routers import chat, investigate, incidents
 
 app = FastAPI(
     title=settings.app_name,
@@ -18,7 +18,7 @@ app.add_middleware(
 
 app.include_router(chat.router)
 app.include_router(investigate.router) 
-
+app.include_router(incidents.router)
 @app.get("/health")
 async def health():
     return {"status": "ok", "model": settings.ollama_model}
