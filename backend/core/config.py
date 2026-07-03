@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     app_name: str = "Sentinel AI"
     debug: bool = True
     chroma_path: str = "./data/chroma"
+    database_url: str = ""
+    github_token: str = ""
+    github_repo: str = ""
 
     class Config:
         env_file = ".env"
