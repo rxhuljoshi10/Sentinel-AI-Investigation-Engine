@@ -2,7 +2,7 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from backend.agents.graph import investigation_graph
-from backend.services.log_service import extract_log_content
+from backend.tools.database_tool import save_incident_to_db
 
 router = APIRouter(prefix="/api", tags=["investigation"])
 
@@ -12,9 +12,6 @@ class InvestigationRequest(BaseModel):
 
 @router.post("/investigation/run")
 async def run_investigation(request: InvestigationRequest):
-    """
-    Runs the full multi-agent investigation pipeline.
-    """
     investigation_id = str(uuid.uuid4())
 
     initial_state = {
@@ -33,6 +30,18 @@ async def run_investigation(request: InvestigationRequest):
 
     try:
         final_state = await investigation_graph.ainvoke(initial_state)
+
+        # Save to PostgreSQL
+        await save_incident_to_db(
+            investigation_id=investigation_id,
+            description=request.incident_description,
+            log_content=request.log_content,
+            final_report=final_state["final_report"],
+            tools_completed=final_state["completed_tools"],
+            tools_failed=final_state["failed_tools"]
+        )
+
+        print(f"[Investigation] Saved to PostgreSQL: {investigation_id}")
 
         return {
             "investigation_id": investigation_id,

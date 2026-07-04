@@ -4,6 +4,8 @@ from backend.core.config import settings
 from backend.agents.state import InvestigationState
 from backend.services.vector_service import search_similar_incidents
 from backend.models.schemas import InvestigationReport
+from backend.services.function_calling_service import run_function_calling
+from backend.tools.database_tool import save_incident_to_db
 
 def clean_and_parse_json(raw: str) -> dict:
     """
@@ -67,15 +69,57 @@ async def call_llm_with_retry(messages: list, max_retries: int = 3) -> dict:
 # ─── Planner Node ────────────────────────────────────────────────────────────
 
 async def planner_node(state: InvestigationState) -> dict:
-    """
-    Decides what the investigation needs based on the incident description.
-    Always runs first. Sets the investigation context.
-    """
     print(f"[Planner] Starting investigation: {state['incident_description'][:100]}")
 
+    # Run function calling — LLM decides which tools to use
+    fc_results = await run_function_calling(
+        state["incident_description"],
+        state.get("log_content", "")
+    )
+
+    # Convert tool results into evidence
+    evidence_items = [
+        f"Investigation started: {state['incident_description']}",
+        f"Tool selection reasoning: {fc_results['reasoning']}"
+    ]
+
+    # Extract evidence from each tool result
+    for tool_name, result in fc_results["results"].items():
+        if not result.get("success"):
+            evidence_items.append(f"{tool_name} failed: {result.get('error')}")
+            continue
+
+        if tool_name == "search_github_commits":
+            commits = result.get("commits", [])
+            for commit in commits[:3]:
+                evidence_items.append(
+                    f"GitHub commit: '{commit['message']}' "
+                    f"by {commit['author']} at {commit['timestamp']}"
+                )
+
+        elif tool_name == "query_incidents_db":
+            incidents = result.get("incidents", [])
+            for inc in incidents[:3]:
+                evidence_items.append(
+                    f"Past DB incident: {inc['probable_cause']} "
+                    f"(severity: {inc['severity']})"
+                )
+
+        elif tool_name == "read_log_file":
+            content = result.get("content", "")
+            if content:
+                evidence_items.append(
+                    f"Log file content preview: {content[:200]}"
+                )
+
+    print(f"[Planner] Collected {len(evidence_items)} items from tools")
+
     return {
-        "evidence": [f"Investigation started: {state['incident_description']}"],
-        "completed_tools": ["planner"]
+        "evidence": evidence_items,
+        "completed_tools": ["planner"],
+        "github_commits": fc_results["results"].get(
+            "search_github_commits", {}
+        ).get("commits", [])
     }
 
 # ─── Log Analyzer Node ───────────────────────────────────────────────────────
@@ -182,40 +226,40 @@ async def rag_searcher_node(state: InvestigationState) -> dict:
 
 # ─── GitHub Searcher Node ────────────────────────────────────────────────────
 
-async def github_searcher_node(state: InvestigationState) -> dict:
-    """
-    Simulates checking GitHub for recent commits near the incident time.
-    In v0.5 this will use real GitHub API via MCP.
-    """
-    print("[GitHub Searcher] Checking recent commits...")
+# async def github_searcher_node(state: InvestigationState) -> dict:
+#     """
+#     Simulates checking GitHub for recent commits near the incident time.
+#     In v0.5 this will use real GitHub API via MCP.
+#     """
+#     print("[GitHub Searcher] Checking recent commits...")
 
-    # Simulated for now - real GitHub integration comes in v0.5
-    log_findings = state.get("log_findings", {})
-    affected = log_findings.get("affected_components", ["unknown-service"])
+#     # Simulated for now - real GitHub integration comes in v0.5
+#     log_findings = state.get("log_findings", {})
+#     affected = log_findings.get("affected_components", ["unknown-service"])
 
-    simulated_commits = [
-        {
-            "sha": "a3f9c21",
-            "message": f"Update connection pool config in {affected[0] if affected else 'service'}",
-            "author": "dev-team",
-            "time": "2 hours before incident"
-        }
-    ]
+#     simulated_commits = [
+#         {
+#             "sha": "a3f9c21",
+#             "message": f"Update connection pool config in {affected[0] if affected else 'service'}",
+#             "author": "dev-team",
+#             "time": "2 hours before incident"
+#         }
+#     ]
 
-    evidence_items = []
-    for commit in simulated_commits:
-        evidence_items.append(
-            f"Recent commit ({commit['time']}): '{commit['message']}' "
-            f"by {commit['author']} [{commit['sha']}]"
-        )
+#     evidence_items = []
+#     for commit in simulated_commits:
+#         evidence_items.append(
+#             f"Recent commit ({commit['time']}): '{commit['message']}' "
+#             f"by {commit['author']} [{commit['sha']}]"
+#         )
 
-    print(f"[GitHub Searcher] Found {len(simulated_commits)} recent commits")
+#     print(f"[GitHub Searcher] Found {len(simulated_commits)} recent commits")
 
-    return {
-        "github_commits": simulated_commits,
-        "evidence": evidence_items,
-        "completed_tools": ["github_searcher"]
-    }
+#     return {
+#         "github_commits": simulated_commits,
+#         "evidence": evidence_items,
+#         "completed_tools": ["github_searcher"]
+#     }
 
 # ─── Reasoner Node ───────────────────────────────────────────────────────────
 
