@@ -1,5 +1,6 @@
 from sqlalchemy import text
 from backend.core.database import AsyncSessionLocal
+import json
 
 async def query_incidents_db(
     service: str,
@@ -92,12 +93,12 @@ async def save_incident_to_db(
                     "severity": final_report.get("severity", "unknown"),
                     "affected_service": final_report.get("affected_service", "unknown"),
                     "probable_cause": final_report.get("probable_cause", ""),
-                    "evidence": str(final_report.get("evidence", [])),
-                    "immediate_actions": str(final_report.get("immediate_actions", [])),
+                    "evidence": json.dumps(final_report.get("evidence", [])),
+                    "immediate_actions": json.dumps(final_report.get("immediate_actions", [])),
                     "confidence": final_report.get("confidence", 0.0),
                     "investigation_summary": final_report.get("investigation_summary", ""),
-                    "tools_completed": str(tools_completed),
-                    "tools_failed": str(tools_failed)
+                    "tools_completed": json.dumps(tools_completed),
+                    "tools_failed": json.dumps(tools_failed)
                 }
             )
             await session.commit()

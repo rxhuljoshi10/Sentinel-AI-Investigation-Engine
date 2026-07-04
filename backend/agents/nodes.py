@@ -5,7 +5,9 @@ from backend.agents.state import InvestigationState
 from backend.services.vector_service import search_similar_incidents
 from backend.models.schemas import InvestigationReport
 from backend.services.function_calling_service import run_function_calling
-from backend.tools.database_tool import save_incident_to_db
+# from backend.tools.database_tool import save_incident_to_db
+from backend.services.memory_service import get_service_memory, update_service_memory
+
 
 def clean_and_parse_json(raw: str) -> dict:
     """
@@ -65,9 +67,7 @@ async def call_llm_with_retry(messages: list, max_retries: int = 3) -> dict:
     raise last_error
 
 
-
 # ─── Planner Node ────────────────────────────────────────────────────────────
-
 async def planner_node(state: InvestigationState) -> dict:
     print(f"[Planner] Starting investigation: {state['incident_description'][:100]}")
 
@@ -123,7 +123,6 @@ async def planner_node(state: InvestigationState) -> dict:
     }
 
 # ─── Log Analyzer Node ───────────────────────────────────────────────────────
-
 async def log_analyzer_node(state: InvestigationState) -> dict:
     print("[Log Analyzer] Analyzing log content...")
 
@@ -173,7 +172,6 @@ LOG:
     
 
 # ─── RAG Searcher Node ───────────────────────────────────────────────────────
-
 async def rag_searcher_node(state: InvestigationState) -> dict:
     """
     Searches ChromaDB for similar past incidents.
@@ -225,44 +223,43 @@ async def rag_searcher_node(state: InvestigationState) -> dict:
         }
 
 # ─── GitHub Searcher Node ────────────────────────────────────────────────────
+#Just for simulation, currently not in used!
+async def github_searcher_node(state: InvestigationState) -> dict:
+    """
+    Simulates checking GitHub for recent commits near the incident time.
+    In v0.5 this will use real GitHub API via MCP.
+    """
+    print("[GitHub Searcher] Checking recent commits...")
 
-# async def github_searcher_node(state: InvestigationState) -> dict:
-#     """
-#     Simulates checking GitHub for recent commits near the incident time.
-#     In v0.5 this will use real GitHub API via MCP.
-#     """
-#     print("[GitHub Searcher] Checking recent commits...")
+    # Simulated for now - real GitHub integration comes in v0.5
+    log_findings = state.get("log_findings", {})
+    affected = log_findings.get("affected_components", ["unknown-service"])
 
-#     # Simulated for now - real GitHub integration comes in v0.5
-#     log_findings = state.get("log_findings", {})
-#     affected = log_findings.get("affected_components", ["unknown-service"])
+    simulated_commits = [
+        {
+            "sha": "a3f9c21",
+            "message": f"Update connection pool config in {affected[0] if affected else 'service'}",
+            "author": "dev-team",
+            "time": "2 hours before incident"
+        }
+    ]
 
-#     simulated_commits = [
-#         {
-#             "sha": "a3f9c21",
-#             "message": f"Update connection pool config in {affected[0] if affected else 'service'}",
-#             "author": "dev-team",
-#             "time": "2 hours before incident"
-#         }
-#     ]
+    evidence_items = []
+    for commit in simulated_commits:
+        evidence_items.append(
+            f"Recent commit ({commit['time']}): '{commit['message']}' "
+            f"by {commit['author']} [{commit['sha']}]"
+        )
 
-#     evidence_items = []
-#     for commit in simulated_commits:
-#         evidence_items.append(
-#             f"Recent commit ({commit['time']}): '{commit['message']}' "
-#             f"by {commit['author']} [{commit['sha']}]"
-#         )
+    print(f"[GitHub Searcher] Found {len(simulated_commits)} recent commits")
 
-#     print(f"[GitHub Searcher] Found {len(simulated_commits)} recent commits")
-
-#     return {
-#         "github_commits": simulated_commits,
-#         "evidence": evidence_items,
-#         "completed_tools": ["github_searcher"]
-#     }
+    return {
+        "github_commits": simulated_commits,
+        "evidence": evidence_items,
+        "completed_tools": ["github_searcher"]
+    }
 
 # ─── Reasoner Node ───────────────────────────────────────────────────────────
-
 async def reasoner_node(state: InvestigationState) -> dict:
     print(f"[Reasoner] Synthesizing {len(state.get('evidence', []))} evidence items...")
 
@@ -317,3 +314,75 @@ Evidence:
                 "investigation_summary": "Automated investigation failed."
             }
         }
+    
+
+#Memory Node
+async def memory_node(state: InvestigationState) -> dict:
+    """
+    Two responsibilities:
+    1. Before investigation — retrieve relevant memory
+    2. After investigation — update memory with new findings
+    """
+    print("[Memory] Retrieving service memory...")
+
+    final_report = state.get("final_report", {})
+    affected_service = final_report.get("affected_service", "")
+
+    # If we have a final report, update memory
+    if affected_service and affected_service != "unknown":
+        await update_service_memory(
+            service_name=affected_service,
+            probable_cause=final_report.get("probable_cause", ""),
+            immediate_actions=final_report.get("immediate_actions", []),
+            confidence=final_report.get("confidence", 0.0)
+        )
+        print(f"[Memory] Updated memory for {affected_service}")
+
+    # Retrieve memory for context
+    service_hint = affected_service or _extract_service_hint(
+        state.get("incident_description", "")
+    )
+
+    memory = await get_service_memory(service_hint)
+
+    # Convert memory into evidence
+    evidence_items = []
+    if memory["has_memory"]:
+        evidence_items.append(
+            f"Service memory: {memory['service']} has had "
+            f"{memory['total_incidents']} previous incidents"
+        )
+
+        if memory["common_causes"]:
+            evidence_items.append(
+                f"Known causes for {memory['service']}: "
+                f"{', '.join(memory['common_causes'][:3])}"
+            )
+
+        for runbook in memory["runbooks"][:2]:
+            evidence_items.append(
+                f"Proven runbook (used {runbook['times_used']}x, "
+                f"confidence {runbook['confidence']}): "
+                f"{runbook['trigger']} → {runbook['steps']}"
+            )
+
+    return {
+        "evidence": evidence_items,
+        "completed_tools": ["memory"]
+    }
+
+def _extract_service_hint(description: str) -> str:
+    """
+    Extracts likely service name from incident description.
+    Simple keyword matching — good enough for now.
+    """
+    keywords = ["payment", "auth", "api", "database", "frontend",
+                "notification", "order", "user", "search"]
+    description_lower = description.lower()
+
+    for keyword in keywords:
+        if keyword in description_lower:
+            return keyword
+
+    return "unknown"
+

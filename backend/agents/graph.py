@@ -4,8 +4,13 @@ from backend.agents.nodes import (
     planner_node,
     log_analyzer_node,
     rag_searcher_node,
-    reasoner_node
+    reasoner_node,
+    memory_node
 )
+
+async def join_node(state: InvestigationState) -> dict:
+    """Empty node that acts as a join point before reasoning."""
+    return {}
 
 def build_investigation_graph():
     """
@@ -19,20 +24,21 @@ def build_investigation_graph():
     graph.add_node("log_analyzer", log_analyzer_node)
     graph.add_node("rag_searcher", rag_searcher_node)
     graph.add_node("reasoner", reasoner_node)
+    graph.add_node("memory", memory_node)
+    graph.add_node("join", join_node)
 
     # Entry point
     graph.set_entry_point("planner")
 
-    # Planner always fans out to all evidence collectors in parallel
     graph.add_edge("planner", "log_analyzer")
-    graph.add_edge("planner", "rag_searcher")
 
 
-    # All evidence collectors feed into reasoner
-    graph.add_edge("log_analyzer", "reasoner")
+    graph.add_edge("log_analyzer", "rag_searcher")
+    graph.add_edge("log_analyzer", "memory")
+
     graph.add_edge("rag_searcher", "reasoner")
-
-    # Reasoner always ends the investigation
+    graph.add_edge("memory", "reasoner")
+    
     graph.add_edge("reasoner", END)
 
     return graph.compile()

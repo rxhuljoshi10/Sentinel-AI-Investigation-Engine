@@ -1,10 +1,11 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
-from sqlalchemy import Column, String, Float, DateTime, Text, JSON
+from sqlalchemy import Column, String, Float, DateTime, Text, JSON, Integer
 from datetime import datetime
 from backend.core.config import settings
 
-engine = create_async_engine(settings.database_url, echo=settings.debug)
+
+engine = create_async_engine(settings.database_url, echo=False)
 
 AsyncSessionLocal = sessionmaker(
     engine,
@@ -42,6 +43,30 @@ class ToolCallRecord(Base):
     result_summary = Column(Text)
     success = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class ServiceMemory(Base):
+    __tablename__ = "service_memory"
+
+    id = Column(String, primary_key=True)
+    service_name = Column(String, nullable=False, unique=True)
+    total_incidents = Column(Integer, default=0)
+    common_causes = Column(JSON)        # list of frequent causes
+    successful_fixes = Column(JSON)     # list of fixes that worked
+    peak_incident_times = Column(JSON)  # when incidents usually happen
+    last_updated = Column(DateTime, default=datetime.utcnow)
+
+class InvestigationRunbook(Base):
+    __tablename__ = "runbooks"
+
+    id = Column(String, primary_key=True)
+    service_name = Column(String, nullable=False)
+    trigger_pattern = Column(Text)      # what triggers this runbook
+    resolution_steps = Column(JSON)     # proven fix steps
+    confidence = Column(Float)          # how reliable this runbook is
+    times_used = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_used = Column(DateTime)
+
 
 async def init_db():
     async with engine.begin() as conn:
