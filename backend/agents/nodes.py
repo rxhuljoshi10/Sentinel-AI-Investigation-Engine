@@ -7,7 +7,7 @@ from backend.models.schemas import InvestigationReport
 from backend.services.function_calling_service import run_function_calling
 # from backend.tools.database_tool import save_incident_to_db
 from backend.services.memory_service import get_service_memory, update_service_memory
-
+import os
 
 def clean_and_parse_json(raw: str) -> dict:
     """
@@ -153,11 +153,11 @@ LOG:
         ])
 
         evidence_items = [
-            f"Log analysis - Timeline: {findings.get('timeline', 'unknown')}",
-            f"Log analysis - Affected: {', '.join(findings.get('affected_components', []))}",
+            f"[CURRENT LOG] Timeline: {findings.get('timeline', 'unknown')}",
+            f"[CURRENT LOG] Affected: {', '.join(findings.get('affected_components', []))}",
         ]
         for pattern in findings.get("error_patterns", [])[:3]:
-            evidence_items.append(f"Log pattern: {pattern}")
+            evidence_items.append(f"[CURRENT LOG] Pattern: {pattern}")
 
         print(f"[Log Analyzer] Found {len(evidence_items)} evidence items")
         return {
@@ -202,8 +202,8 @@ async def rag_searcher_node(state: InvestigationState) -> dict:
         evidence_items = []
         for incident in similar:
             evidence_items.append(
-                f"Similar past incident (score: {incident.similarity_score}): "
-                f"{incident.probable_cause} → resolved by: "
+                f"[PAST INCIDENT] Similar (score: {incident.similarity_score}): "
+                f"{incident.probable_cause}"
                 f"{incident.immediate_actions[0] if incident.immediate_actions else 'unknown'}"
             )
 
@@ -260,12 +260,78 @@ async def github_searcher_node(state: InvestigationState) -> dict:
     }
 
 # ─── Reasoner Node ───────────────────────────────────────────────────────────
+# async def reasoner_node(state: InvestigationState) -> dict:
+#     print(f"[Reasoner] Synthesizing {len(state.get('evidence', []))} evidence items...")
+
+#     evidence_block = "\n".join([
+#         f"- {item}" for item in state.get("evidence", [])
+#     ])
+
+#     completed = state.get("completed_tools", [])
+#     failed = state.get("failed_tools", [])
+
+#     try:
+#         report = await call_llm_with_retry([
+#             {
+#                 "role": "system",
+#                 "content": "You are an expert incident investigator. Respond only with valid JSON, no markdown."
+#             },
+#             {
+#                 "role": "user",
+#                 "content": f"""Investigate this incident and reply with ONLY a JSON object.
+
+# IMPORTANT: Base your analysis primarily on the CURRENT LOG evidence.
+# Past incidents are reference only — do NOT copy their conclusions
+# if the current log shows different symptoms.
+
+# Required keys:
+# - severity: "critical", "high", "medium", or "low"
+# - affected_service: service name (string)
+# - probable_cause: one sentence root cause (string)
+# - evidence: list of 3 key evidence items (strings)
+# - immediate_actions: list of 3 fix steps (strings)
+# - confidence: number 0.0 to 1.0
+# - investigation_summary: two sentence summary (string)
+
+# Incident: {state['incident_description']}
+# Tools completed: {', '.join(completed)}
+# Tools failed: {', '.join(failed) if failed else 'none'}
+
+# Evidence (prioritize items labeled 'Log pattern' and 'Log analysis'):
+# {evidence_block[:1500]}"""
+#             }
+#         ])
+
+#         print("[Reasoner] Report generated successfully")
+#         return {"final_report": report}
+
+#     except Exception as e:
+#         print(f"[Reasoner] Failed after retries: {e}")
+#         return {
+#             "final_report": {
+#                 "severity": "unknown",
+#                 "affected_service": "unknown",
+#                 "probable_cause": f"Reasoner failed: {str(e)}",
+#                 "evidence": state.get("evidence", [])[:3],
+#                 "immediate_actions": ["Manual investigation required"],
+#                 "confidence": 0.0,
+#                 "investigation_summary": "Automated investigation failed."
+#             }
+#         }
+
 async def reasoner_node(state: InvestigationState) -> dict:
     print(f"[Reasoner] Synthesizing {len(state.get('evidence', []))} evidence items...")
 
-    evidence_block = "\n".join([
-        f"- {item}" for item in state.get("evidence", [])
-    ])
+    all_evidence = state.get("evidence", [])
+
+    # Separate current log evidence from historical context
+    current_evidence = [e for e in all_evidence if e.startswith("[CURRENT LOG]")]
+    historical_evidence = [e for e in all_evidence if e.startswith("[PAST INCIDENT]") or e.startswith("[MEMORY]")]
+    other_evidence = [e for e in all_evidence if not e.startswith("[CURRENT LOG]") and not e.startswith("[PAST") and not e.startswith("[MEMORY]")]
+
+    current_block = "\n".join(f"- {e}" for e in current_evidence)
+    historical_block = "\n".join(f"- {e}" for e in historical_evidence)
+    other_block = "\n".join(f"- {e}" for e in other_evidence)
 
     completed = state.get("completed_tools", [])
     failed = state.get("failed_tools", [])
@@ -278,23 +344,27 @@ async def reasoner_node(state: InvestigationState) -> dict:
             },
             {
                 "role": "user",
-                "content": f"""Investigate this incident and reply with ONLY a JSON object.
+                "content": f"""Investigate this incident. Reply with ONLY a JSON object.
 
-Required keys:
+CURRENT INCIDENT: {state['incident_description']}
+
+CURRENT LOG EVIDENCE (use this as primary source):
+{current_block if current_block else "No log evidence available"}
+
+HISTORICAL CONTEXT (reference only, do NOT copy these conclusions):
+{historical_block if historical_block else "No historical context"}
+
+OTHER EVIDENCE:
+{other_block if other_block else "None"}
+
+Required JSON keys:
 - severity: "critical", "high", "medium", or "low"
-- affected_service: service name (string)
-- probable_cause: one sentence root cause (string)
-- evidence: list of 3 key evidence items (strings)
-- immediate_actions: list of 3 fix steps (strings)
+- affected_service: service name from CURRENT LOG
+- probable_cause: root cause based on CURRENT LOG evidence
+- evidence: list of 3 items FROM CURRENT LOG only
+- immediate_actions: list of 3 fix steps for THIS specific issue
 - confidence: number 0.0 to 1.0
-- investigation_summary: two sentence summary (string)
-
-Incident: {state['incident_description']}
-Tools completed: {', '.join(completed)}
-Tools failed: {', '.join(failed) if failed else 'none'}
-
-Evidence:
-{evidence_block[:1500]}"""
+- investigation_summary: two sentences about THIS incident"""
             }
         ])
 
@@ -308,14 +378,13 @@ Evidence:
                 "severity": "unknown",
                 "affected_service": "unknown",
                 "probable_cause": f"Reasoner failed: {str(e)}",
-                "evidence": state.get("evidence", [])[:3],
+                "evidence": current_evidence[:3],
                 "immediate_actions": ["Manual investigation required"],
                 "confidence": 0.0,
                 "investigation_summary": "Automated investigation failed."
             }
         }
     
-
 #Memory Node
 async def memory_node(state: InvestigationState) -> dict:
     """
@@ -323,6 +392,8 @@ async def memory_node(state: InvestigationState) -> dict:
     1. Before investigation — retrieve relevant memory
     2. After investigation — update memory with new findings
     """
+    if os.environ.get("EVAL_MODE") == "true":
+        return {"completed_tools": ["memory"]}
     print("[Memory] Retrieving service memory...")
 
     final_report = state.get("final_report", {})
@@ -348,16 +419,10 @@ async def memory_node(state: InvestigationState) -> dict:
     # Convert memory into evidence
     evidence_items = []
     if memory["has_memory"]:
-        evidence_items.append(
-            f"Service memory: {memory['service']} has had "
-            f"{memory['total_incidents']} previous incidents"
-        )
+        evidence_items.append(f"[MEMORY] {memory['service']} had {memory['total_incidents']} previous incidents")
 
         if memory["common_causes"]:
-            evidence_items.append(
-                f"Known causes for {memory['service']}: "
-                f"{', '.join(memory['common_causes'][:3])}"
-            )
+            evidence_items.append(f"[MEMORY] Known causes: {', '.join(memory['common_causes'][:3])}")
 
         for runbook in memory["runbooks"][:2]:
             evidence_items.append(
