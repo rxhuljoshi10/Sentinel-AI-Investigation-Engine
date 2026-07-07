@@ -10,6 +10,11 @@ class Settings(BaseSettings):
     database_url: str = ""
     github_token: str = ""
     github_repo: str = ""
+    redis_url: str = "redis://localhost:6379"
+
+    jwt_secret: str = "change-this-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 1440  # 24 hours
 
     class Config:
         env_file = ".env"

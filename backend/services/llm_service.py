@@ -1,6 +1,7 @@
 import httpx
 import json
 from backend.core.config import settings
+from backend.core.cache import get_cached, set_cached, make_cache_key
 
 async def stream_investigation(message: str):
     """
@@ -46,6 +47,12 @@ async def analyze_log(log_content: str) -> dict:
     """
     Sends log content to Ollama and returns a structured investigation report.
     """
+
+    cache_key = make_cache_key("log_analysis", log_content)
+    cached = await get_cached(cache_key)
+    if cached:
+        print("[LLM] Cache hit — returning cached analysis")
+        return cached
 
     system_prompt = """You are Sentinel, an expert incident investigation AI.
 Analyze the provided log content and respond with ONLY a valid JSON object.
@@ -97,6 +104,9 @@ Example format:
         response.raise_for_status()
         data = response.json()
         content = data["message"]["content"].strip()
+
+        await set_cached(cache_key, content, ttl=3600)
+
         return content                    
     
 async def analyze_log_with_context(

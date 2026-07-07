@@ -4,6 +4,8 @@ from pydantic import BaseModel
 from backend.agents.graph import investigation_graph
 from backend.tools.database_tool import save_incident_to_db
 from backend.services.memory_service import update_service_memory
+from backend.core.auth import get_current_user
+from fastapi import Depends
 
 router = APIRouter(prefix="/api", tags=["investigation"])
 
@@ -12,7 +14,7 @@ class InvestigationRequest(BaseModel):
     log_content: str = ""
 
 @router.post("/investigation/run")
-async def run_investigation(request: InvestigationRequest):
+async def run_investigation(request: InvestigationRequest, current_user: dict = Depends(get_current_user)):
     investigation_id = str(uuid.uuid4())
 
     initial_state = {

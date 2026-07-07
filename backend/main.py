@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.routers import chat, investigate, incidents, investigation, evaluation
+from backend.routers import chat, investigate, incidents, investigation, evaluation, auth
 from backend.core.config import settings
 from backend.core.database import init_db
 
@@ -27,6 +27,7 @@ app.include_router(investigate.router)
 app.include_router(incidents.router)
 app.include_router(investigation.router)
 app.include_router(evaluation.router)
+app.include_router(auth.router)
 
 @app.get("/health")
 async def health():
