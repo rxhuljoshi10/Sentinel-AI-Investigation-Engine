@@ -8,9 +8,6 @@ from backend.agents.nodes import (
     memory_node
 )
 
-async def join_node(state: InvestigationState) -> dict:
-    """Empty node that acts as a join point before reasoning."""
-    return {}
 
 def build_investigation_graph():
     """
@@ -25,7 +22,6 @@ def build_investigation_graph():
     graph.add_node("rag_searcher", rag_searcher_node)
     graph.add_node("reasoner", reasoner_node)
     graph.add_node("memory", memory_node)
-    graph.add_node("join", join_node)
 
     # Entry point
     graph.set_entry_point("planner")

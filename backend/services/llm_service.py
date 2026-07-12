@@ -43,9 +43,10 @@ async def stream_investigation(message: str):
                     except json.JSONDecodeError:
                         continue
 
-async def analyze_log(log_content: str) -> dict:
+async def analyze_log(log_content: str) -> str:
     """
-    Sends log content to Ollama and returns a structured investigation report.
+    Sends log content to Ollama and returns a raw JSON string.
+    Callers must json.loads() the result before use.
     """
 
     cache_key = make_cache_key("log_analysis", log_content)
@@ -112,9 +113,10 @@ Example format:
 async def analyze_log_with_context(
     log_content: str,
     similar_incidents: list
-) -> dict:
+) -> str:
     """
     Analyzes a log file with context from similar past incidents.
+    Returns a raw JSON string. Callers must json.loads() the result.
     """
 
     # Build context block from similar incidents

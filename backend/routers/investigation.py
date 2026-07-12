@@ -24,7 +24,6 @@ async def run_investigation(request: InvestigationRequest, current_user: dict = 
         "log_findings": {},
         "similar_incidents": [],
         "github_commits": [],
-        "db_anomalies": [],
         "failed_tools": [],
         "completed_tools": [],
         "final_report": {},
@@ -69,3 +68,9 @@ async def run_investigation(request: InvestigationRequest, current_user: dict = 
             status_code=500,
             detail=f"Investigation failed: {str(e)}"
         )
+
+@router.get("/investigation/cache-stats")
+async def get_cache_stats_endpoint(current_user: dict = Depends(get_current_user)):
+    from backend.core.cache import get_cache_stats
+    stats = await get_cache_stats()
+    return stats

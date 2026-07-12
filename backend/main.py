@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.routers import chat, investigate, incidents, investigation, evaluation, auth
+from backend.routers import chat, investigation, evaluation, auth
 from backend.core.config import settings
 from backend.core.database import init_db
 
@@ -23,8 +23,6 @@ async def startup():
     print("Database initialized")
 
 app.include_router(chat.router)
-app.include_router(investigate.router)
-app.include_router(incidents.router)
 app.include_router(investigation.router)
 app.include_router(evaluation.router)
 app.include_router(auth.router)

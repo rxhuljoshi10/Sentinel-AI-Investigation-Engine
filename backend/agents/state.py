@@ -13,7 +13,6 @@ class InvestigationState(TypedDict):
     log_findings: dict
     similar_incidents: list
     github_commits: list
-    db_anomalies: list
 
     # Control flow
     failed_tools: Annotated[list[str], add]

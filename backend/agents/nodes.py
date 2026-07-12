@@ -91,9 +91,11 @@ async def planner_node(state: InvestigationState) -> dict:
 
         if tool_name == "search_github_commits":
             commits = result.get("commits", [])
+            is_simulated = result.get("simulated", False)
+            prefix = "[SIMULATED COMMIT]" if is_simulated else "[GITHUB COMMIT]"
             for commit in commits[:3]:
                 evidence_items.append(
-                    f"GitHub commit: '{commit['message']}' "
+                    f"{prefix} '{commit['message']}' "
                     f"by {commit['author']} at {commit['timestamp']}"
                 )
 
@@ -222,104 +224,20 @@ async def rag_searcher_node(state: InvestigationState) -> dict:
             "similar_incidents": []
         }
 
-# ─── GitHub Searcher Node ────────────────────────────────────────────────────
-#Just for simulation, currently not in used!
-async def github_searcher_node(state: InvestigationState) -> dict:
-    """
-    Simulates checking GitHub for recent commits near the incident time.
-    In v0.5 this will use real GitHub API via MCP.
-    """
-    print("[GitHub Searcher] Checking recent commits...")
-
-    # Simulated for now - real GitHub integration comes in v0.5
-    log_findings = state.get("log_findings", {})
-    affected = log_findings.get("affected_components", ["unknown-service"])
-
-    simulated_commits = [
-        {
-            "sha": "a3f9c21",
-            "message": f"Update connection pool config in {affected[0] if affected else 'service'}",
-            "author": "dev-team",
-            "time": "2 hours before incident"
-        }
-    ]
-
-    evidence_items = []
-    for commit in simulated_commits:
-        evidence_items.append(
-            f"Recent commit ({commit['time']}): '{commit['message']}' "
-            f"by {commit['author']} [{commit['sha']}]"
-        )
-
-    print(f"[GitHub Searcher] Found {len(simulated_commits)} recent commits")
-
-    return {
-        "github_commits": simulated_commits,
-        "evidence": evidence_items,
-        "completed_tools": ["github_searcher"]
-    }
-
-# ─── Reasoner Node ───────────────────────────────────────────────────────────
-# async def reasoner_node(state: InvestigationState) -> dict:
-#     print(f"[Reasoner] Synthesizing {len(state.get('evidence', []))} evidence items...")
-
-#     evidence_block = "\n".join([
-#         f"- {item}" for item in state.get("evidence", [])
-#     ])
-
-#     completed = state.get("completed_tools", [])
-#     failed = state.get("failed_tools", [])
-
-#     try:
-#         report = await call_llm_with_retry([
-#             {
-#                 "role": "system",
-#                 "content": "You are an expert incident investigator. Respond only with valid JSON, no markdown."
-#             },
-#             {
-#                 "role": "user",
-#                 "content": f"""Investigate this incident and reply with ONLY a JSON object.
-
-# IMPORTANT: Base your analysis primarily on the CURRENT LOG evidence.
-# Past incidents are reference only — do NOT copy their conclusions
-# if the current log shows different symptoms.
-
-# Required keys:
-# - severity: "critical", "high", "medium", or "low"
-# - affected_service: service name (string)
-# - probable_cause: one sentence root cause (string)
-# - evidence: list of 3 key evidence items (strings)
-# - immediate_actions: list of 3 fix steps (strings)
-# - confidence: number 0.0 to 1.0
-# - investigation_summary: two sentence summary (string)
-
-# Incident: {state['incident_description']}
-# Tools completed: {', '.join(completed)}
-# Tools failed: {', '.join(failed) if failed else 'none'}
-
-# Evidence (prioritize items labeled 'Log pattern' and 'Log analysis'):
-# {evidence_block[:1500]}"""
-#             }
-#         ])
-
-#         print("[Reasoner] Report generated successfully")
-#         return {"final_report": report}
-
-#     except Exception as e:
-#         print(f"[Reasoner] Failed after retries: {e}")
-#         return {
-#             "final_report": {
-#                 "severity": "unknown",
-#                 "affected_service": "unknown",
-#                 "probable_cause": f"Reasoner failed: {str(e)}",
-#                 "evidence": state.get("evidence", [])[:3],
-#                 "immediate_actions": ["Manual investigation required"],
-#                 "confidence": 0.0,
-#                 "investigation_summary": "Automated investigation failed."
-#             }
-#         }
 
 async def reasoner_node(state: InvestigationState) -> dict:
+    from backend.core.cache import get_cached, set_cached, make_cache_key
+
+    incident_desc = state.get("incident_description", "")
+    log_content = state.get("log_content", "")
+    combined_content = f"{incident_desc}|||{log_content}"
+    cache_key = make_cache_key("reasoner_report", combined_content)
+
+    cached_report = await get_cached(cache_key)
+    if cached_report:
+        print("[Reasoner] Cache hit — returning cached report")
+        return {"final_report": cached_report}
+
     print(f"[Reasoner] Synthesizing {len(state.get('evidence', []))} evidence items...")
 
     all_evidence = state.get("evidence", [])
@@ -369,6 +287,7 @@ Required JSON keys:
         ])
 
         print("[Reasoner] Report generated successfully")
+        await set_cached(cache_key, report, ttl=3600)
         return {"final_report": report}
 
     except Exception as e:

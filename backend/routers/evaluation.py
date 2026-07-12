@@ -27,7 +27,6 @@ async def run_evaluation():
             "log_findings": {},
             "similar_incidents": [],
             "github_commits": [],
-            "db_anomalies": [],
             "failed_tools": [],
             "completed_tools": [],
             "final_report": {},

@@ -96,17 +96,18 @@ async def search_similar_incidents(
     metadatas = results["metadatas"][0]
     distances = results["distances"][0]
 
-    for metadata, distance in zip(metadatas, distances):
+    for i, (metadata, distance) in enumerate(zip(metadatas, distances)):
         # ChromaDB cosine distance: 0 = identical, 2 = opposite
         # Convert to similarity score: 1 = identical, 0 = opposite
         similarity_score = 1 - (distance / 2)
 
         # Only include genuinely similar incidents
-        if similarity_score < 0.5:
+        # 0.75+ means the error type, service, and symptoms are actually related
+        if similarity_score < 0.75:
             continue
 
         similar.append(SimilarIncident(
-            id=results["ids"][0][metadatas.index(metadata)],
+            id=results["ids"][0][i],
             similarity_score=round(similarity_score, 3),
             affected_service=metadata["affected_service"],
             probable_cause=metadata["probable_cause"],
