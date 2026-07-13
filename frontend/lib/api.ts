@@ -110,5 +110,36 @@ export const api = {
     } catch (e: any) {
       onError(e.message || "Connection error");
     }
+  },
+
+  async getInvestigations(
+    token: string,
+    filters: { severity?: string; service?: string } = {}
+  ): Promise<any[]> {
+    const params = new URLSearchParams();
+    if (filters.severity && filters.severity !== "all") params.set("severity", filters.severity);
+    if (filters.service && filters.service !== "all") params.set("service", filters.service);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    const res = await fetch(`${API_BASE}/api/investigations${qs}`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (!res.ok) throw new Error("Failed to fetch investigations");
+    return res.json();
+  },
+
+  async getInvestigationById(token: string, id: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/api/investigations/${id}`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (!res.ok) throw new Error("Investigation not found");
+    return res.json();
+  },
+
+  async getInvestigationFrequency(token: string): Promise<{ date: string; count: number }[]> {
+    const res = await fetch(`${API_BASE}/api/investigations/frequency`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (!res.ok) throw new Error("Failed to fetch frequency data");
+    return res.json();
   }
 };
