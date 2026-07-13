@@ -21,3 +21,4 @@ class InvestigationState(TypedDict):
     # Final output
     final_report: dict
     investigation_id: str
+    progress_queue: any

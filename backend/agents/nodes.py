@@ -67,15 +67,33 @@ async def call_llm_with_retry(messages: list, max_retries: int = 3) -> dict:
     raise last_error
 
 
+async def publish_progress(state: InvestigationState, node: str, status: str, message: str):
+    """
+    Helper to log progress to stdout and enqueue updates in state['progress_queue'] if present.
+    """
+    print(f"[{node}] {message}")
+    queue = state.get("progress_queue")
+    if queue and hasattr(queue, "put"):
+        await queue.put({
+            "node": node,
+            "status": status,
+            "message": message
+        })
+
 # ─── Planner Node ────────────────────────────────────────────────────────────
 async def planner_node(state: InvestigationState) -> dict:
-    print(f"[Planner] Starting investigation: {state['incident_description'][:100]}")
+    await publish_progress(state, "Planner", "running", f"Starting investigation: {state['incident_description'][:80]}...")
 
     # Run function calling — LLM decides which tools to use
+    await publish_progress(state, "Planner", "running", "Deciding which diagnostic tools to run...")
     fc_results = await run_function_calling(
         state["incident_description"],
         state.get("log_content", "")
     )
+
+    selected_tools = list(fc_results.get("results", {}).keys())
+    tools_str = ", ".join(selected_tools) if selected_tools else "none"
+    await publish_progress(state, "Planner", "running", f"Selected diagnostic tools: {tools_str}")
 
     # Convert tool results into evidence
     evidence_items = [
@@ -114,7 +132,7 @@ async def planner_node(state: InvestigationState) -> dict:
                     f"Log file content preview: {content[:200]}"
                 )
 
-    print(f"[Planner] Collected {len(evidence_items)} items from tools")
+    await publish_progress(state, "Planner", "completed", f"Collected {len(evidence_items)} evidence items from diagnostics.")
 
     return {
         "evidence": evidence_items,
@@ -124,13 +142,14 @@ async def planner_node(state: InvestigationState) -> dict:
         ).get("commits", [])
     }
 
+
 # ─── Log Analyzer Node ───────────────────────────────────────────────────────
 async def log_analyzer_node(state: InvestigationState) -> dict:
-    print("[Log Analyzer] Analyzing log content...")
+    await publish_progress(state, "Log Analyzer", "running", "Analyzing log content patterns...")
 
     log_content = state.get("log_content", "")
     if not log_content:
-        print("[Log Analyzer] No log content, skipping")
+        await publish_progress(state, "Log Analyzer", "completed", "No log content provided, skipping log analysis.")
         return {"failed_tools": ["log_analyzer"], "log_findings": {}}
 
     try:
@@ -161,7 +180,7 @@ LOG:
         for pattern in findings.get("error_patterns", [])[:3]:
             evidence_items.append(f"[CURRENT LOG] Pattern: {pattern}")
 
-        print(f"[Log Analyzer] Found {len(evidence_items)} evidence items")
+        await publish_progress(state, "Log Analyzer", "completed", f"Extracted log indicators. Timeline: {findings.get('timeline', 'unknown')}, Components: {', '.join(findings.get('affected_components', []))}")
         return {
             "log_findings": findings,
             "evidence": evidence_items,
@@ -169,7 +188,7 @@ LOG:
         }
 
     except Exception as e:
-        print(f"[Log Analyzer] Failed after retries: {e}")
+        await publish_progress(state, "Log Analyzer", "failed", f"Log analysis failed: {str(e)}")
         return {"failed_tools": ["log_analyzer"], "log_findings": {}}
     
 
@@ -178,7 +197,7 @@ async def rag_searcher_node(state: InvestigationState) -> dict:
     """
     Searches ChromaDB for similar past incidents.
     """
-    print("[RAG Searcher] Searching for similar incidents...")
+    await publish_progress(state, "RAG Searcher", "running", "Querying ChromaDB vector store for similar past incidents...")
 
     try:
         log_findings = state.get("log_findings", {})
@@ -209,7 +228,7 @@ async def rag_searcher_node(state: InvestigationState) -> dict:
                 f"{incident.immediate_actions[0] if incident.immediate_actions else 'unknown'}"
             )
 
-        print(f"[RAG Searcher] Found {len(similar)} similar incidents")
+        await publish_progress(state, "RAG Searcher", "completed", f"ChromaDB search complete. Found {len(similar)} matching incidents.")
 
         return {
             "similar_incidents": similar,
@@ -218,11 +237,12 @@ async def rag_searcher_node(state: InvestigationState) -> dict:
         }
 
     except Exception as e:
-        print(f"[RAG Searcher] Failed: {e}")
+        await publish_progress(state, "RAG Searcher", "failed", f"ChromaDB query failed: {str(e)}")
         return {
             "failed_tools": ["rag_searcher"],
             "similar_incidents": []
         }
+
 
 
 async def reasoner_node(state: InvestigationState) -> dict:
@@ -235,10 +255,10 @@ async def reasoner_node(state: InvestigationState) -> dict:
 
     cached_report = await get_cached(cache_key)
     if cached_report:
-        print("[Reasoner] Cache hit — returning cached report")
+        await publish_progress(state, "Reasoner", "completed", "Cache hit! Retrieved pre-synthesized root cause analysis report from Redis.")
         return {"final_report": cached_report}
 
-    print(f"[Reasoner] Synthesizing {len(state.get('evidence', []))} evidence items...")
+    await publish_progress(state, "Reasoner", "running", f"Synthesizing {len(state.get('evidence', []))} evidence items with Ollama...")
 
     all_evidence = state.get("evidence", [])
 
@@ -286,12 +306,12 @@ Required JSON keys:
             }
         ])
 
-        print("[Reasoner] Report generated successfully")
+        await publish_progress(state, "Reasoner", "completed", "Root cause synthesis complete. Final report generated successfully.")
         await set_cached(cache_key, report, ttl=3600)
         return {"final_report": report}
 
     except Exception as e:
-        print(f"[Reasoner] Failed after retries: {e}")
+        await publish_progress(state, "Reasoner", "failed", f"Synthesis failed: {str(e)}")
         return {
             "final_report": {
                 "severity": "unknown",
@@ -313,20 +333,22 @@ async def memory_node(state: InvestigationState) -> dict:
     """
     if os.environ.get("EVAL_MODE") == "true":
         return {"completed_tools": ["memory"]}
-    print("[Memory] Retrieving service memory...")
+    
+    await publish_progress(state, "Memory", "running", "Retrieving historical service metrics and proven runbooks from Postgres...")
 
     final_report = state.get("final_report", {})
     affected_service = final_report.get("affected_service", "")
 
     # If we have a final report, update memory
     if affected_service and affected_service != "unknown":
+        await publish_progress(state, "Memory", "running", f"Updating service memory logs for {affected_service} in Postgres...")
         await update_service_memory(
             service_name=affected_service,
             probable_cause=final_report.get("probable_cause", ""),
             immediate_actions=final_report.get("immediate_actions", []),
             confidence=final_report.get("confidence", 0.0)
         )
-        print(f"[Memory] Updated memory for {affected_service}")
+        await publish_progress(state, "Memory", "running", f"Updated memory dashboard records for {affected_service}.")
 
     # Retrieve memory for context
     service_hint = affected_service or _extract_service_hint(
@@ -350,10 +372,13 @@ async def memory_node(state: InvestigationState) -> dict:
                 f"{runbook['trigger']} → {runbook['steps']}"
             )
 
+    await publish_progress(state, "Memory", "completed", f"Service history retrieval complete. Found {memory.get('total_incidents', 0)} previous incident records.")
+
     return {
         "evidence": evidence_items,
         "completed_tools": ["memory"]
     }
+
 
 def _extract_service_hint(description: str) -> str:
     """

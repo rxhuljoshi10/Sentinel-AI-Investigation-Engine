@@ -40,6 +40,8 @@ export default function DashboardPage() {
   const [chatMessage, setChatMessage] = useState("");
   const [chatResponse, setChatResponse] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
+  const [progressLogs, setProgressLogs] = useState<{ node: string; status: string; message: string }[]>([]);
+  const logEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const t = localStorage.getItem("token");
@@ -52,18 +54,38 @@ export default function DashboardPage() {
     setUsername(u || "");
   }, [router]);
 
+  useEffect(() => {
+    if (logEndRef.current) {
+      logEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [progressLogs]);
+
   async function handleInvestigate() {
     if (!description.trim() || !token) return;
     setLoading(true);
     setError("");
     setResult(null);
+    setProgressLogs([]);
 
     try {
-      const data = await api.runInvestigation(description, logContent, token);
-      setResult(data);
+      await api.runInvestigationStream(
+        description,
+        logContent,
+        token,
+        (progress) => {
+          setProgressLogs(prev => [...prev, progress]);
+        },
+        (data) => {
+          setResult(data);
+          setLoading(false);
+        },
+        (err) => {
+          setError(err);
+          setLoading(false);
+        }
+      );
     } catch (e) {
       setError("Investigation failed. Check backend logs.");
-    } finally {
       setLoading(false);
     }
   }
@@ -178,22 +200,33 @@ export default function DashboardPage() {
               {error && <p className="text-red-400 text-sm">{error}</p>}
             </div>
 
-            {/* Loading State */}
+            {/* Loading / Progress State */}
             {loading && (
-              <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-                <div className="flex items-center gap-3">
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4">
+                <div className="flex items-center gap-3 border-b border-gray-800 pb-3">
                   <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-gray-400">
-                    Agents investigating...
+                  <span className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
+                    Sentinel Agent Execution Pipeline
                   </span>
                 </div>
-                <div className="mt-4 space-y-2">
-                  {["Planner", "Log Analyzer", "RAG Searcher", "Memory", "Reasoner"].map(agent => (
-                    <div key={agent} className="flex items-center gap-2 text-sm text-gray-500">
-                      <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-                      {agent}
-                    </div>
-                  ))}
+                
+                <div className="font-mono text-xs space-y-1.5 max-h-60 overflow-y-auto bg-black p-4 rounded-lg border border-gray-800 select-text">
+                  {progressLogs.length === 0 ? (
+                    <div className="text-gray-600 animate-pulse">Initializing pipeline state...</div>
+                  ) : (
+                    progressLogs.map((log, idx) => {
+                      const color = log.status === "completed" ? "text-green-400" : log.status === "failed" ? "text-red-400" : "text-blue-400";
+                      const icon = log.status === "completed" ? "✔" : log.status === "failed" ? "✘" : "●";
+                      return (
+                        <div key={idx} className="flex items-start gap-2 leading-relaxed">
+                          <span className={`${color} font-bold`}>{icon}</span>
+                          <span className="text-gray-500">[{log.node}]</span>
+                          <span className="text-gray-300">{log.message}</span>
+                        </div>
+                      );
+                    })
+                  )}
+                  <div ref={logEndRef} />
                 </div>
               </div>
             )}
