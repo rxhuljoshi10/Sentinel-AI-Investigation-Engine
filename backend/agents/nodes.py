@@ -214,10 +214,16 @@ async def rag_searcher_node(state: InvestigationState) -> dict:
             confidence=0.5
         )
 
+        # Extract primary service name for filtering (take first component if multiple)
+        detected_components = log_findings.get("affected_components", [])
+        primary_service = detected_components[0] if detected_components else None
+
         similar = await search_similar_incidents(
             state.get("log_content", state["incident_description"]),
             temp_report,
-            top_k=3
+            top_k=3,
+            exclude_id=state.get("investigation_id"),
+            service_name=primary_service
         )
 
         evidence_items = []

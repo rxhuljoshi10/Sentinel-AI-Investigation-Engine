@@ -1,0 +1,57 @@
+{
+  "total_test_cases": 3,
+  "passed": 3,
+  "failed": 0,
+  "average_score": 0.795,
+  "dimension_averages": {
+    "rule_based": 0.839,
+    "evidence_grounding": 1.0,
+    "semantic_similarity": 0.741,
+    "llm_judge": 0.6
+  },
+  "results": [
+    {
+      "test_case": "Database connection pool exhaustion",
+      "scores": {
+        "rule_based": 0.867,
+        "evidence_grounding": 1.0,
+        "semantic_similarity": 0.776,
+        "llm_judge": 0.8
+      },
+      "overall_score": 0.861,
+      "passed": true,
+      "actual_severity": "high",
+      "actual_service": "payment-service",
+      "actual_cause": "Connection pool exhausted due to high usage triggering circuit breaker and resulting in internal server errors."
+    },
+    {
+      "test_case": "Out of memory error",
+      "scores": {
+        "rule_based": 0.783,
+        "evidence_grounding": 1.0,
+        "semantic_similarity": 0.803,
+        "llm_judge": 0.5
+      },
+      "overall_score": 0.771,
+      "passed": true,
+      "actual_severity": "critical",
+      "actual_service": "order-service",
+      "actual_cause": "java.lang.OutOfMemoryError due to excessive memory usage by the order processing batch size"
+    },
+    {
+      "test_case": "Authentication service timeout",
+      "scores": {
+        "rule_based": 0.867,
+        "evidence_grounding": 1.0,
+        "semantic_similarity": 0.645,
+        "llm_judge": 0.5
+      },
+      "overall_score": 0.753,
+      "passed": true,
+      "actual_severity": "high",
+      "actual_service": "auth-service",
+      "actual_cause": "Response time degrading and request timeout after HTTP 503 Service Unavailable due to high load triggering circuit breaker."
+    }
+  ],
+  "evaluated_at": "2026-07-15T10:21:01.623700"
+}

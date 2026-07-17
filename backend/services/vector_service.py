@@ -66,10 +66,14 @@ async def store_incident(
 async def search_similar_incidents(
     log_content: str,
     report: InvestigationReport,
-    top_k: int = 3
+    top_k: int = 3,
+    exclude_id: str | None = None,
+    service_name: str | None = None
 ) -> list[SimilarIncident]:
     """
     Finds the most similar past incidents to the current one.
+    When service_name is provided, restricts search to that service only
+    (prevents cross-service false positives from generic SRE vocabulary).
     """
 
     # Check if we have anything stored yet
@@ -86,25 +90,39 @@ async def search_similar_incidents(
 
     embedding = await generate_embedding(text_to_embed)
 
+    # Query top candidates
     results = collection.query(
         query_embeddings=[embedding],
         n_results=min(top_k, collection.count()),
         include=["metadatas", "distances"]
     )
 
+
     similar = []
     metadatas = results["metadatas"][0]
     distances = results["distances"][0]
 
     for i, (metadata, distance) in enumerate(zip(metadatas, distances)):
-        # ChromaDB cosine distance: 0 = identical, 2 = opposite
-        # Convert to similarity score: 1 = identical, 0 = opposite
         similarity_score = 1 - (distance / 2)
+        record_id = results["ids"][0][i]
 
-        # Only include genuinely similar incidents
-        # 0.75+ means the error type, service, and symptoms are actually related
-        if similarity_score < 0.75:
+        # Skip self
+        if exclude_id and record_id == exclude_id:
             continue
+
+        # A single threshold works better than service-name filtering.
+        # From observed data:
+        #   - Same failure pattern (e.g. DB pool vs DB pool): 0.93-0.95 → pass
+        #   - Different failure type (e.g. Redis vs DB pool):  0.86-0.89 → fail
+        # Service name is intentionally ignored: a DB pool exhaustion on
+        # payment-service IS a useful similar incident for user-service.
+        if similarity_score < 0.92:
+            continue
+
+        print(
+            f"[RAG] Similar incident: service={metadata.get('affected_service')} "
+            f"score={similarity_score:.3f}"
+        )
 
         similar.append(SimilarIncident(
             id=results["ids"][0][i],

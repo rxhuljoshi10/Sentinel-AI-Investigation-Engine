@@ -94,6 +94,10 @@ export default function DashboardPage() {
   const [serviceFilter, setServiceFilter] = useState("all");
   const [frequencyData, setFrequencyData] = useState<{ date: string; count: number }[]>([]);
 
+  // Evaluation scores state
+  const [reportEval, setReportEval] = useState<{ evidence_grounding: number; llm_judge: number; overall: number } | null>(null);
+  const [evalRunning, setEvalRunning] = useState(false);
+
   useEffect(() => {
     const t = localStorage.getItem("token");
     const u = localStorage.getItem("username");
@@ -202,9 +206,27 @@ export default function DashboardPage() {
     router.push("/");
   }
 
+  async function handleEvaluateReport() {
+    if (!token || !result || evalRunning) return;
+    setEvalRunning(true);
+    setReportEval(null);
+    try {
+      const scores = await api.evaluateReport(
+        token,
+        logContent,
+        result.final_report
+      );
+      setReportEval(scores);
+    } catch {
+      // silently fail
+    } finally {
+      setEvalRunning(false);
+    }
+  }
+
   // Chart helpers
   const maxCount = Math.max(...frequencyData.map(d => d.count), 1);
-  const recentFrequency = frequencyData.slice(-14); // show last 14 days in chart
+  const recentFrequency = frequencyData.slice(-14);
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
@@ -224,7 +246,7 @@ export default function DashboardPage() {
 
       <div className="max-w-6xl mx-auto px-6 py-8">
         {/* Tabs */}
-        <div className="flex gap-2 mb-8">
+        <div className="flex gap-2 mb-6">
           {(["investigate", "history", "chat"] as const).map(tab => (
             <button
               key={tab}
@@ -356,6 +378,66 @@ export default function DashboardPage() {
                       <div className="text-blue-400 mt-1">{result.similar_incidents_found} found</div>
                     </div>
                   </div>
+                </div>
+
+                {/* Evaluate Report button + inline scores */}
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-300">Report Quality</h4>
+                      <p className="text-xs text-gray-600 mt-0.5">Score this report against your actual log input</p>
+                    </div>
+                    <button
+                      onClick={handleEvaluateReport}
+                      disabled={evalRunning || !logContent.trim()}
+                      className="text-xs px-4 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-40 text-gray-300 transition-colors font-medium border border-gray-700"
+                    >
+                      {evalRunning ? "Evaluating…" : "Evaluate Report"}
+                    </button>
+                  </div>
+
+                  {!logContent.trim() && (
+                    <p className="text-xs text-gray-600 italic mt-3">Provide log content above to enable evaluation.</p>
+                  )}
+
+                  {reportEval && (
+                    <div className="mt-4 space-y-2.5">
+                      {([
+                        { key: "evidence_grounding", label: "Evidence grounding", hint: "Did evidence come from your logs?" },
+                        { key: "llm_judge", label: "LLM-as-judge", hint: "Accuracy · completeness · actionability" },
+                      ] as const).map(({ key, label, hint }) => {
+                        const score = reportEval[key];
+                        const pct = Math.round(score * 100);
+                        const barColor = pct >= 80 ? "bg-green-500" : pct >= 65 ? "bg-yellow-500" : "bg-red-500";
+                        return (
+                          <div key={key}>
+                            <div className="flex items-center justify-between mb-1">
+                              <div>
+                                <span className="text-xs text-gray-300">{label}</span>
+                                <span className="text-xs text-gray-600 ml-2">{hint}</span>
+                              </div>
+                              <span className="text-xs font-mono font-semibold text-white">{score.toFixed(2)}</span>
+                            </div>
+                            <div className="bg-gray-800 rounded-full h-1.5 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-700 ${barColor}`}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <div className="flex items-center justify-between pt-2 border-t border-gray-800">
+                        <span className="text-xs font-semibold text-gray-300">Overall</span>
+                        <span className={`text-sm font-bold ${
+                          reportEval.overall >= 0.8 ? "text-green-400" :
+                          reportEval.overall >= 0.65 ? "text-yellow-400" : "text-red-400"
+                        }`}>
+                          {reportEval.overall.toFixed(3)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

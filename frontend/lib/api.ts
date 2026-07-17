@@ -141,5 +141,39 @@ export const api = {
     });
     if (!res.ok) throw new Error("Failed to fetch frequency data");
     return res.json();
+  },
+
+  async getLatestEvaluation(token: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/api/evaluation/latest`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (!res.ok) throw new Error("Failed to fetch evaluation scores");
+    return res.json();
+  },
+
+  async runEvaluation(token: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/api/evaluation/run`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (!res.ok) throw new Error("Evaluation run failed");
+    return res.json();
+  },
+
+  async evaluateReport(
+    token: string,
+    logContent: string,
+    finalReport: object
+  ): Promise<{ evidence_grounding: number; llm_judge: number; overall: number }> {
+    const res = await fetch(`${API_BASE}/api/evaluation/report`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ log_content: logContent, final_report: finalReport })
+    });
+    if (!res.ok) throw new Error("Report evaluation failed");
+    return res.json();
   }
 };
