@@ -2,7 +2,6 @@
 
 An Autonomous Incident Investigation Platform powered by a multi-agent AI pipeline. Paste a log file and incident description — Sentinel investigates it like a senior engineer would, producing a structured Root Cause Analysis report in minutes.
 
-**Live demo:** `http://localhost:3000` · **API docs:** `http://localhost:8000/docs`
 
 ---
 
@@ -15,39 +14,68 @@ When a production incident happens, developers manually check logs, cross-refere
 
 ---
 
-## Architecture
+## Architecture & Multi-Agent Pipeline
 
-The system runs five specialized agents coordinated by LangGraph:
+Sentinel coordinates five specialized agents using **LangGraph** to build a state-driven execution DAG:
 
-| Agent | Role |
-|---|---|
-| Planner | Uses function calling to select the right tools for this specific incident |
-| Log Analyzer | Extracts structured findings from raw log content |
-| RAG Searcher | Finds semantically similar past incidents in ChromaDB |
-| Memory | Retrieves service-level patterns and proven runbooks from PostgreSQL |
-| Reasoner | Synthesizes all evidence into a structured RCA report |
+```mermaid
+graph TD
+    User([Incident Report + Logs]) --> Planner
+    
+    subgraph Pipeline [LangGraph Pipeline]
+        Planner[1. Planner Node] -->|Function Calling| Tools[Diagnostic Tools]
+        Tools --> LogAnalyzer[2. Log Analyzer]
+        
+        LogAnalyzer -->|Parallel Fan-Out| RAG[3. RAG Searcher]
+        LogAnalyzer -->|Parallel Fan-Out| Memory[4. Memory Node]
+        
+        RAG -->|Fan-In| Reasoner[5. Reasoner Node]
+        Memory -->|Fan-In| Reasoner
+    end
+    
+    subgraph Storage [Storage & Context]
+        RAG <--->|Cosine Similarity| ChromaDB[(ChromaDB Vector Store)]
+        Memory <--->|SQL Queries| Postgres[(PostgreSQL DB)]
+    end
+    
+    subgraph External [External Integrations]
+        Tools -->|Fetch commits| GitHub[GitHub API / Mock]
+        Tools -->|Read logs| FS[Filesystem Logs]
+    end
 
-Log Analyzer and Memory run in parallel. RAG Searcher runs after Log Analyzer (needs structured findings for better embeddings). All three feed into Reasoner.
+    Reasoner -->|Synthesize RCA| Redis{Redis Cache}
+    Redis -->|Cache Miss| LLM[Ollama: llama3.2:3b]
+    Reasoner --> Output([Structured RCA Report])
+```
+
+### Detailed Agent Lifecycle & Data Flow
+
+1. **Planner**: Performs LLM-driven function calling to identify which diagnostic tools are needed. It automatically determines whether to run `search_github_commits` (to fetch recent deployment commits), `query_incidents_db` (for historical metadata), or `read_log_file` (sandboxed filesystem reader).
+2. **Log Analyzer**: Performs a structured first-pass analysis of the logs to isolate error patterns, timelines, affected components, and critical indicators.
+3. **RAG Searcher (Parallel)**: Implements **Two-Pass RAG**. Using structured components from the Log Analyzer, it constructs a search embedding using `nomic-embed-text` and queries **ChromaDB** with a strict cosine similarity threshold ($\ge 0.92$) to retrieve similar past incidents.
+4. **Memory (Parallel)**: Consults **PostgreSQL** to fetch historical service statistics (common causes, successful fixes) and retrieves proven, high-confidence runbooks.
+5. **Reasoner**: Combines all evidence items (each tagged with its source: `[CURRENT LOG]`, `[PAST INCIDENT]`, `[MEMORY]`). It performs a final synthesized LLM pass to output a structured JSON report specifying severity, affected service, probable cause, log-grounded evidence, and immediate remediation steps.
 
 ---
 
-## Tech stack
+## Tech Stack
 
-**Frontend:** Next.js · React · Tailwind CSS  
-**Backend:** FastAPI · Python 3.13  
-**AI:** Ollama (llama3.2:3b) · LangGraph · LangChain · nomic-embed-text  
-**Storage:** PostgreSQL (structured incidents) · ChromaDB (vector embeddings) · Redis (LLM response cache)  
-**Infra:** Docker Compose · GitHub Actions CI  
+- **Frontend:** Next.js (React 19) · Tailwind CSS 4
+- **Backend:** FastAPI (Python 3.13) · LangGraph · LangChain
+- **LLM & Embeddings:** Ollama (`llama3.2:3b` & `nomic-embed-text`)
+- **Storage:** PostgreSQL 16 (Relational/Memory) · ChromaDB (Vector embeddings) · Redis 7 (LLM Cache)
+- **Infra:** Docker Compose · GitHub Actions CI
 
 ---
 
-## Key technical decisions
+## Key Engineering Decisions
 
-**Two-pass RAG** — To search ChromaDB meaningfully, we need a structured embedding (service name, cause, severity). But we don't have that from a raw log. So we run a first-pass analysis to extract structure, embed that, search for similar incidents, then re-analyze with historical context included.
+* **Two-Pass RAG**: Raw logs are noisy and contain non-standard vocabulary. The system runs a structured log analysis first (first pass), then embeds the structured findings (service name, error type, severity) to query ChromaDB for past incidents (second pass). This produces highly accurate semantic matches.
+* **Evidence Source Labeling**: To prevent the Reasoner from copying conclusions from similar past incidents, every evidence piece is explicitly prefixed (`[CURRENT LOG]`, `[PAST INCIDENT]`, `[MEMORY]`). The Reasoner prompt is structured to strictly prioritize current log evidence while treating history as reference context.
+* **Auto-Runbook Generation**: If an investigation finishes with a confidence score of $\ge 0.85$, the platform automatically compiles the resolution actions into a runbook inside PostgreSQL, facilitating instant retrieval for future incidents.
+* **Dual-Database Strategy**: ChromaDB handles semantic queries ("find incidents with similar error profiles"), while PostgreSQL handles structured query criteria ("show incidents by severity/service over time").
+* **Fail-Safe Orchestration**: If downstream APIs (like GitHub or Redis) fail, the backend degrades gracefully using simulated fallbacks and bypasses cache/tools without breaking the core agent pipeline.
 
-**Evidence source labeling** — Early evaluation (avg 0.627) revealed memory contamination: the model was copying past incident conclusions instead of reasoning from current logs. Fixed by labeling all evidence with source tags (`[CURRENT LOG]`, `[PAST INCIDENT]`, `[MEMORY]`) and restructuring the Reasoner prompt to explicitly prioritize current evidence. Score improved to 0.786.
-
-**PostgreSQL + ChromaDB serve different purposes** — ChromaDB handles semantic similarity ("find incidents that mean the same thing"). PostgreSQL handles structured queries ("show all critical incidents from last week"). Neither can replace the other.
 
 ---
 
@@ -119,18 +147,5 @@ sentinel-ai/
 
 ---
 
-## Roadmap
-
-- [x] v0.1 — FastAPI + Ollama streaming chat
-- [x] v0.2 — Structured log analysis with Pydantic validation
-- [x] v0.3 — RAG pipeline with ChromaDB
-- [x] v0.4 — Multi-agent LangGraph investigation
-- [x] v0.5 — Function calling + real GitHub/PostgreSQL tools
-- [x] v0.6 — Long-term memory + runbook generation
-- [x] v0.7 — Evaluation framework
-- [x] v0.8 — Next.js dashboard + JWT auth + Redis + Docker
-- [ ] v0.9 — Kubernetes + AWS deployment
-
----
 
 Built by [Rahul Joshi](https://github.com/YOUR_USERNAME) · MCA @ MIT ADT University
