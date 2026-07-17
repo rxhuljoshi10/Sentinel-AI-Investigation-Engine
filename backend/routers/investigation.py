@@ -4,7 +4,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from backend.agents.graph import investigation_graph
 from backend.tools.database_tool import save_incident_to_db
+from backend.services.vector_service import store_incident
 from backend.services.memory_service import update_service_memory
+from backend.models.schemas import InvestigationReport
 from backend.core.auth import get_current_user
 import asyncio
 import json
@@ -34,20 +36,36 @@ async def run_investigation(request: InvestigationRequest, current_user: dict = 
 
     try:
         final_state = await investigation_graph.ainvoke(initial_state)
+        final_report = final_state["final_report"]
 
-        # Save to PostgreSQL
+        # Save structured data to PostgreSQL
         await save_incident_to_db(
             investigation_id=investigation_id,
             description=request.incident_description,
             log_content=request.log_content,
-            final_report=final_state["final_report"],
+            final_report=final_report,
             tools_completed=final_state["completed_tools"],
             tools_failed=final_state["failed_tools"]
         )
         print(f"[Investigation] Saved to PostgreSQL: {investigation_id}")
 
-         # Update memory with findings
-        final_report = final_state["final_report"]
+        # Store embedding in ChromaDB so future RAG searches can find this incident.
+        # Only store when we have a real report (not an unknown/error fallback).
+        if final_report.get("affected_service", "unknown") != "unknown":
+            try:
+                report_obj = InvestigationReport(
+                    severity=final_report["severity"],
+                    affected_service=final_report["affected_service"],
+                    probable_cause=final_report["probable_cause"],
+                    evidence=final_report.get("evidence", []),
+                    immediate_actions=final_report.get("immediate_actions", []),
+                    confidence=final_report.get("confidence", 0.0)
+                )
+                await store_incident(investigation_id, request.log_content, report_obj)
+            except Exception as e:
+                print(f"[Investigation] ChromaDB store failed (non-fatal): {e}")
+
+        # Update long-term service memory
         if final_report.get("affected_service", "unknown") != "unknown":
             await update_service_memory(
                 service_name=final_report["affected_service"],
@@ -58,7 +76,7 @@ async def run_investigation(request: InvestigationRequest, current_user: dict = 
 
         return {
             "investigation_id": investigation_id,
-            "final_report": final_state["final_report"],
+            "final_report": final_report,
             "evidence_collected": final_state["evidence"],
             "tools_completed": final_state["completed_tools"],
             "tools_failed": final_state["failed_tools"],
@@ -109,7 +127,7 @@ async def run_investigation_stream(request: InvestigationRequest, current_user: 
             final_state = await task
             final_report = final_state["final_report"]
 
-            # Save to PostgreSQL
+            # Save structured data to PostgreSQL
             await save_incident_to_db(
                 investigation_id=investigation_id,
                 description=request.incident_description,
@@ -119,7 +137,23 @@ async def run_investigation_stream(request: InvestigationRequest, current_user: 
                 tools_failed=final_state["failed_tools"]
             )
 
-            # Update memory with findings
+            # Store embedding in ChromaDB so future RAG searches can find this incident.
+            # Only store when we have a real report (not an unknown/error fallback).
+            if final_report.get("affected_service", "unknown") != "unknown":
+                try:
+                    report_obj = InvestigationReport(
+                        severity=final_report["severity"],
+                        affected_service=final_report["affected_service"],
+                        probable_cause=final_report["probable_cause"],
+                        evidence=final_report.get("evidence", []),
+                        immediate_actions=final_report.get("immediate_actions", []),
+                        confidence=final_report.get("confidence", 0.0)
+                    )
+                    await store_incident(investigation_id, request.log_content, report_obj)
+                except Exception as e:
+                    print(f"[Investigation] ChromaDB store failed (non-fatal): {e}")
+
+            # Update long-term service memory
             if final_report.get("affected_service", "unknown") != "unknown":
                 await update_service_memory(
                     service_name=final_report["affected_service"],

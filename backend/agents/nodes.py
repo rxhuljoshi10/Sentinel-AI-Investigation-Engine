@@ -3,9 +3,7 @@ import json
 from backend.core.config import settings
 from backend.agents.state import InvestigationState
 from backend.services.vector_service import search_similar_incidents
-from backend.models.schemas import InvestigationReport
 from backend.services.function_calling_service import run_function_calling
-# from backend.tools.database_tool import save_incident_to_db
 from backend.services.memory_service import get_service_memory, update_service_memory
 import os
 
@@ -195,46 +193,71 @@ LOG:
 # ─── RAG Searcher Node ───────────────────────────────────────────────────────
 async def rag_searcher_node(state: InvestigationState) -> dict:
     """
-    Searches ChromaDB for similar past incidents.
+    Two-Pass RAG: searches ChromaDB using structured findings from the Log Analyzer.
+
+    The Log Analyzer runs first and extracts service names, error patterns, and
+    severity indicators from the raw log. We use those structured fields to build
+    the query embedding — NOT the raw user incident description.
+
+    This ensures the query embedding schema matches how past incidents were stored,
+    which is what makes similarity scores meaningful.
     """
     await publish_progress(state, "RAG Searcher", "running", "Querying ChromaDB vector store for similar past incidents...")
 
     try:
         log_findings = state.get("log_findings", {})
 
-        # Build a temporary report object for the search
-        temp_report = InvestigationReport(
-            severity="high",
-            affected_service=", ".join(
-                log_findings.get("affected_components", ["unknown"])
-            ),
-            probable_cause=state["incident_description"],
-            evidence=log_findings.get("severity_indicators", [])[:2] or ["none"],
-            immediate_actions=["investigating"],
-            confidence=0.5
-        )
+        # ── Build structured query fields from Log Analyzer output ──────────────
+        # These mirror the fields used when incidents are stored in ChromaDB.
 
-        # Extract primary service name for filtering (take first component if multiple)
-        detected_components = log_findings.get("affected_components", [])
-        primary_service = detected_components[0] if detected_components else None
+        affected_components = log_findings.get("affected_components", [])
+        service = affected_components[0] if affected_components else "unknown"
+
+        error_patterns = log_findings.get("error_patterns", [])
+        severity_indicators = log_findings.get("severity_indicators", [])
+
+        # Cause: prefer Log Analyzer's extracted error patterns over raw user text.
+        # Raw user descriptions like "payment service throwing 500s" embed differently
+        # than stored causes like "connection pool exhausted", producing poor similarity.
+        if error_patterns:
+            cause = "; ".join(error_patterns[:3])
+        else:
+            cause = state["incident_description"]
+
+        # Severity: infer from severity_indicators keywords, default to high
+        severity = "high"
+        if severity_indicators:
+            indicators_text = " ".join(severity_indicators).lower()
+            if any(w in indicators_text for w in ["fatal", "crash", "oom", "out of memory", "terminated"]):
+                severity = "critical"
+            elif any(w in indicators_text for w in ["warn", "degrading", "slow", "timeout"]):
+                severity = "medium"
 
         similar = await search_similar_incidents(
-            state.get("log_content", state["incident_description"]),
-            temp_report,
+            service=service,
+            cause=cause,
+            severity=severity,
+            log_content=state.get("log_content", ""),
             top_k=3,
-            exclude_id=state.get("investigation_id"),
-            service_name=primary_service
+            exclude_id=state.get("investigation_id")
         )
 
         evidence_items = []
         for incident in similar:
+            first_action = (
+                incident.immediate_actions[0]
+                if incident.immediate_actions
+                else "no action recorded"
+            )
             evidence_items.append(
-                f"[PAST INCIDENT] Similar (score: {incident.similarity_score}): "
-                f"{incident.probable_cause}"
-                f"{incident.immediate_actions[0] if incident.immediate_actions else 'unknown'}"
+                f"[PAST INCIDENT] Similar (score: {incident.similarity_score:.3f}): "
+                f"{incident.probable_cause} — fix: {first_action}"
             )
 
-        await publish_progress(state, "RAG Searcher", "completed", f"ChromaDB search complete. Found {len(similar)} matching incidents.")
+        await publish_progress(
+            state, "RAG Searcher", "completed",
+            f"ChromaDB search complete. Found {len(similar)} matching incidents."
+        )
 
         return {
             "similar_incidents": similar,
