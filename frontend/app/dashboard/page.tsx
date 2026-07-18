@@ -341,7 +341,7 @@ export default function DashboardPage() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                    <h4 className="text-sm font-semibold text-gray-300 mb-3">Evidence</h4>
+                    <h4 className="text-sm font-semibold text-gray-300 mb-3">Key Log Evidence</h4>
                     <ul className="space-y-2">
                       {result.final_report.evidence.map((item, i) => (
                         <li key={i} className="text-sm text-gray-400 flex gap-2">
@@ -379,6 +379,51 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 </div>
+
+                {result.evidence_collected && result.evidence_collected.length > 0 && (
+                  <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                    <h4 className="text-sm font-semibold text-gray-300 mb-3">Pipeline Diagnostic Evidence</h4>
+                    <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                      {result.evidence_collected.map((item, idx) => {
+                        let badgeColor = "bg-gray-800 text-gray-400 border border-gray-700";
+                        let label = "INFO";
+                        let cleanText = item;
+
+                        if (item.startsWith("[GITHUB COMMIT]")) {
+                          badgeColor = "bg-purple-950/50 text-purple-400 border border-purple-900/50";
+                          label = "GIT";
+                          cleanText = item.replace("[GITHUB COMMIT]", "").trim();
+                        } else if (item.startsWith("[SIMULATED COMMIT]")) {
+                          badgeColor = "bg-indigo-950/50 text-indigo-400 border border-indigo-900/50";
+                          label = "MOCK GIT";
+                          cleanText = item.replace("[SIMULATED COMMIT]", "").trim();
+                        } else if (item.startsWith("[CURRENT LOG]")) {
+                          badgeColor = "bg-emerald-950/50 text-emerald-400 border border-emerald-900/50";
+                          label = "LOG";
+                          cleanText = item.replace("[CURRENT LOG]", "").trim();
+                        } else if (item.startsWith("[PAST INCIDENT]")) {
+                          badgeColor = "bg-cyan-950/50 text-cyan-400 border border-cyan-900/50";
+                          label = "RAG MATCH";
+                          cleanText = item.replace("[PAST INCIDENT]", "").trim();
+                        } else if (item.startsWith("[MEMORY]")) {
+                          badgeColor = "bg-amber-950/50 text-amber-400 border border-amber-900/50";
+                          label = "MEMORY";
+                          cleanText = item.replace("[MEMORY]", "").trim();
+                        }
+
+                        return (
+                          <div key={idx} className="flex items-start gap-2.5 text-xs py-1.5 border-b border-gray-800/40 last:border-0">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider flex-shrink-0 ${badgeColor}`}>
+                              {label}
+                            </span>
+                            <span className="text-gray-300 leading-normal">{cleanText}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
 
                 {/* Evaluate Report button + inline scores */}
                 <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
@@ -582,7 +627,7 @@ export default function DashboardPage() {
                     {/* Evidence */}
                     {selectedDetail.evidence?.length > 0 && (
                       <div>
-                        <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Evidence</h4>
+                        <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Key Log Evidence</h4>
                         <ul className="space-y-1.5">
                           {selectedDetail.evidence.map((item, i) => (
                             <li key={i} className="text-sm text-gray-300 flex gap-2">

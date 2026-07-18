@@ -379,8 +379,12 @@ async def memory_node(state: InvestigationState) -> dict:
         )
         await publish_progress(state, "Memory", "running", f"Updated memory dashboard records for {affected_service}.")
 
-    # Retrieve memory for context
-    service_hint = affected_service or _extract_service_hint(
+    # Retrieve memory for context.
+    # Prefer Log Analyzer's extracted components over raw description keyword guessing.
+    detected_components = state.get("log_findings", {}).get("affected_components", [])
+    primary_component = detected_components[0] if detected_components else None
+
+    service_hint = affected_service or primary_component or _extract_service_hint(
         state.get("incident_description", "")
     )
 
