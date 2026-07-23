@@ -33,9 +33,10 @@ def clean_and_parse_json(raw: str) -> dict:
     cleaned = cleaned[start:end]
     return json.loads(cleaned)
 
-async def call_llm_with_retry(messages: list, max_retries: int = 3) -> dict:
+async def call_llm_with_retry(messages: list, max_retries: int = 3, max_tokens: int = 500) -> dict:
     """
     Calls Ollama with retry logic. Returns parsed JSON.
+    max_tokens controls num_predict — increase for larger outputs like the full RCA report.
     """
     last_error = None
 
@@ -49,7 +50,7 @@ async def call_llm_with_retry(messages: list, max_retries: int = 3) -> dict:
                         "messages": messages,
                         "stream": False,
                         "options": {
-                            "num_predict": 500,
+                            "num_predict": max_tokens,
                             "temperature": 0.2,
                             "num_ctx": 2048
                         }
@@ -80,10 +81,10 @@ async def publish_progress(state: InvestigationState, node: str, status: str, me
 
 # ─── Planner Node ────────────────────────────────────────────────────────────
 async def planner_node(state: InvestigationState) -> dict:
-    await publish_progress(state, "Planner", "running", f"Starting investigation: {state['incident_description'][:80]}...")
+    await publish_progress(state, "Planner", "running", f"Investigation initiated — parsing incident: '{state['incident_description'][:70]}...'")
 
     # Run function calling — LLM decides which tools to use
-    await publish_progress(state, "Planner", "running", "Deciding which diagnostic tools to run...")
+    await publish_progress(state, "Planner", "running", "Running LLM function-calling to select optimal diagnostic tools...")
     fc_results = await run_function_calling(
         state["incident_description"],
         state.get("log_content", "")
@@ -91,7 +92,7 @@ async def planner_node(state: InvestigationState) -> dict:
 
     selected_tools = list(fc_results.get("results", {}).keys())
     tools_str = ", ".join(selected_tools) if selected_tools else "none"
-    await publish_progress(state, "Planner", "running", f"Selected diagnostic tools: {tools_str}")
+    await publish_progress(state, "Planner", "running", f"Tools selected → {tools_str}. Executing and collecting diagnostic evidence...")
 
     # Convert tool results into evidence
     evidence_items = [
@@ -130,7 +131,7 @@ async def planner_node(state: InvestigationState) -> dict:
                     f"Log file content preview: {content[:200]}"
                 )
 
-    await publish_progress(state, "Planner", "completed", f"Collected {len(evidence_items)} evidence items from diagnostics.")
+    await publish_progress(state, "Planner", "completed", f"Planner complete → {len(evidence_items)} diagnostic evidence items collected from {len(selected_tools)} tool(s).")
 
     return {
         "evidence": evidence_items,
@@ -143,11 +144,11 @@ async def planner_node(state: InvestigationState) -> dict:
 
 # ─── Log Analyzer Node ───────────────────────────────────────────────────────
 async def log_analyzer_node(state: InvestigationState) -> dict:
-    await publish_progress(state, "Log Analyzer", "running", "Analyzing log content patterns...")
+    await publish_progress(state, "Log Analyzer", "running", "Parsing log structure — extracting error signatures, timeline markers, and affected components...")
 
     log_content = state.get("log_content", "")
     if not log_content:
-        await publish_progress(state, "Log Analyzer", "completed", "No log content provided, skipping log analysis.")
+        await publish_progress(state, "Log Analyzer", "completed", "No log content provided — skipping structural log analysis.")
         return {"failed_tools": ["log_analyzer"], "log_findings": {}}
 
     try:
@@ -178,7 +179,11 @@ LOG:
         for pattern in findings.get("error_patterns", [])[:3]:
             evidence_items.append(f"[CURRENT LOG] Pattern: {pattern}")
 
-        await publish_progress(state, "Log Analyzer", "completed", f"Extracted log indicators. Timeline: {findings.get('timeline', 'unknown')}, Components: {', '.join(findings.get('affected_components', []))}")
+        components_str = ', '.join(findings.get('affected_components', ['unknown']))
+        await publish_progress(
+            state, "Log Analyzer", "completed",
+            f"Analysis complete → Timeline: {findings.get('timeline', 'unknown')} | Affected components: {components_str}"
+        )
         return {
             "log_findings": findings,
             "evidence": evidence_items,
@@ -202,7 +207,7 @@ async def rag_searcher_node(state: InvestigationState) -> dict:
     This ensures the query embedding schema matches how past incidents were stored,
     which is what makes similarity scores meaningful.
     """
-    await publish_progress(state, "RAG Searcher", "running", "Querying ChromaDB vector store for similar past incidents...")
+    await publish_progress(state, "RAG Searcher", "running", "Generating semantic embedding from log findings and querying ChromaDB vector index (threshold: 0.85)...")
 
     try:
         log_findings = state.get("log_findings", {})
@@ -256,7 +261,7 @@ async def rag_searcher_node(state: InvestigationState) -> dict:
 
         await publish_progress(
             state, "RAG Searcher", "completed",
-            f"ChromaDB search complete. Found {len(similar)} matching incidents."
+            f"Vector search complete → {len(similar)} similar past incident(s) found above similarity threshold."
         )
 
         return {
@@ -284,10 +289,10 @@ async def reasoner_node(state: InvestigationState) -> dict:
 
     cached_report = await get_cached(cache_key)
     if cached_report:
-        await publish_progress(state, "Reasoner", "completed", "Cache hit! Retrieved pre-synthesized root cause analysis report from Redis.")
+        await publish_progress(state, "Reasoner", "completed", "Cache hit — returning pre-synthesized RCA report from Redis (TTL: 1hr).")
         return {"final_report": cached_report}
 
-    await publish_progress(state, "Reasoner", "running", f"Synthesizing {len(state.get('evidence', []))} evidence items with Ollama...")
+    await publish_progress(state, "Reasoner", "running", f"Synthesizing {len(state.get('evidence', []))} collected evidence items → generating structured RCA report via Ollama...")
 
     all_evidence = state.get("evidence", [])
 
@@ -307,35 +312,39 @@ async def reasoner_node(state: InvestigationState) -> dict:
         report = await call_llm_with_retry([
             {
                 "role": "system",
-                "content": "You are an expert incident investigator. Respond only with valid JSON, no markdown."
+                "content": "You are a senior SRE incident investigator. Produce detailed, structured RCA reports. Respond only with valid JSON, no markdown."
             },
             {
                 "role": "user",
-                "content": f"""Investigate this incident. Reply with ONLY a JSON object.
+                "content": f"""Investigate this incident and produce a full RCA report. Reply with ONLY a JSON object.
 
 CURRENT INCIDENT: {state['incident_description']}
 
-CURRENT LOG EVIDENCE (use this as primary source):
+CURRENT LOG EVIDENCE (primary source — base your conclusions here):
 {current_block if current_block else "No log evidence available"}
 
 HISTORICAL CONTEXT (reference only, do NOT copy these conclusions):
 {historical_block if historical_block else "No historical context"}
 
-OTHER EVIDENCE:
+OTHER DIAGNOSTIC EVIDENCE:
 {other_block if other_block else "None"}
 
-Required JSON keys:
-- severity: "critical", "high", "medium", or "low"
-- affected_service: service name from CURRENT LOG
-- probable_cause: root cause based on CURRENT LOG evidence
-- evidence: list of 3 items FROM CURRENT LOG only
-- immediate_actions: list of 3 fix steps for THIS specific issue
+Required JSON keys — every key is mandatory:
+- severity: one of "critical", "high", "medium", "low"
+- root_cause_category: one of "Resource Exhaustion", "Memory Leak", "Network Failure", "Configuration Error", "Code Bug", "Dependency Failure", "Capacity Issue", "Security Incident", "Unknown"
+- affected_service: the exact service name from CURRENT LOG
+- probable_cause: one precise sentence — the specific root cause from CURRENT LOG
+- impact: one sentence describing the real-time user-facing impact right now
+- evidence: list of exactly 3 specific log lines or patterns FROM CURRENT LOG only
+- immediate_actions: list of exactly 4 concrete, ordered remediation steps for THIS incident
+- long_term_prevention: list of exactly 2 architectural or process improvements to prevent recurrence
+- escalation: one sentence — who to escalate to and why, or "No escalation required" if low severity
 - confidence: number 0.0 to 1.0
-- investigation_summary: two sentences about THIS incident"""
+- investigation_summary: two sentences summarising THIS incident cause and resolution path"""
             }
-        ])
+        ], max_tokens=900)
 
-        await publish_progress(state, "Reasoner", "completed", "Root cause synthesis complete. Final report generated successfully.")
+        await publish_progress(state, "Reasoner", "completed", "RCA synthesis complete — root cause identified, impact assessed, remediation steps and prevention strategy generated.")
         await set_cached(cache_key, report, ttl=3600)
         return {"final_report": report}
 
@@ -344,10 +353,14 @@ Required JSON keys:
         return {
             "final_report": {
                 "severity": "unknown",
+                "root_cause_category": "Unknown",
                 "affected_service": "unknown",
                 "probable_cause": f"Reasoner failed: {str(e)}",
+                "impact": "Unable to determine impact automatically.",
                 "evidence": current_evidence[:3],
                 "immediate_actions": ["Manual investigation required"],
+                "long_term_prevention": [],
+                "escalation": "Escalate to on-call engineer immediately.",
                 "confidence": 0.0,
                 "investigation_summary": "Automated investigation failed."
             }
@@ -363,21 +376,21 @@ async def memory_node(state: InvestigationState) -> dict:
     if os.environ.get("EVAL_MODE") == "true":
         return {"completed_tools": ["memory"]}
     
-    await publish_progress(state, "Memory", "running", "Retrieving historical service metrics and proven runbooks from Postgres...")
+    await publish_progress(state, "Memory", "running", "Querying long-term service memory and runbook database in Postgres...")
 
     final_report = state.get("final_report", {})
     affected_service = final_report.get("affected_service", "")
 
     # If we have a final report, update memory
     if affected_service and affected_service != "unknown":
-        await publish_progress(state, "Memory", "running", f"Updating service memory logs for {affected_service} in Postgres...")
+        await publish_progress(state, "Memory", "running", f"Persisting investigation findings to service memory for '{affected_service}'...")
         await update_service_memory(
             service_name=affected_service,
             probable_cause=final_report.get("probable_cause", ""),
             immediate_actions=final_report.get("immediate_actions", []),
             confidence=final_report.get("confidence", 0.0)
         )
-        await publish_progress(state, "Memory", "running", f"Updated memory dashboard records for {affected_service}.")
+        await publish_progress(state, "Memory", "running", f"Memory updated → '{affected_service}' incident count incremented, causes list refreshed.")
 
     # Retrieve memory for context.
     # Prefer Log Analyzer's extracted components over raw description keyword guessing.
@@ -405,7 +418,10 @@ async def memory_node(state: InvestigationState) -> dict:
                 f"{runbook['trigger']} → {runbook['steps']}"
             )
 
-    await publish_progress(state, "Memory", "completed", f"Service history retrieval complete. Found {memory.get('total_incidents', 0)} previous incident records.")
+    await publish_progress(
+        state, "Memory", "completed",
+        f"Memory retrieval complete → {memory.get('total_incidents', 0)} prior incident record(s) found for this service."
+    )
 
     return {
         "evidence": evidence_items,

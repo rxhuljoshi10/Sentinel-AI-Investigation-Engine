@@ -1,5 +1,6 @@
 from pydantic import BaseModel, field_validator
 from datetime import datetime
+from typing import Optional
 
 class ChatRequest(BaseModel):
     message: str
@@ -16,10 +17,17 @@ class InvestigationReport(BaseModel):
     immediate_actions: list[str]
     confidence: float
 
+    # Extended RCA fields (optional for backward compatibility)
+    root_cause_category: Optional[str] = None
+    impact: Optional[str] = None
+    long_term_prevention: Optional[list[str]] = None
+    escalation: Optional[str] = None
+    investigation_summary: Optional[str] = None
+
     @field_validator("severity")
     @classmethod
     def severity_must_be_valid(cls, v):
-        allowed = {"critical", "high", "medium", "low"}
+        allowed = {"critical", "high", "medium", "low", "unknown"}
         if v.lower() not in allowed:
             raise ValueError(f"severity must be one of {allowed}")
         return v.lower()

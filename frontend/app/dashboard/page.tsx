@@ -7,10 +7,14 @@ interface InvestigationResult {
   investigation_id: string;
   final_report: {
     severity: string;
+    root_cause_category?: string;
     affected_service: string;
     probable_cause: string;
+    impact?: string;
     evidence: string[];
     immediate_actions: string[];
+    long_term_prevention?: string[];
+    escalation?: string;
     confidence: number;
     investigation_summary: string;
   };
@@ -52,6 +56,21 @@ const SEVERITY_TEXT: Record<string, string> = {
   medium: "text-yellow-400",
   low: "text-green-400",
 };
+
+// Maps internal node/tool names to human-readable agent labels
+const AGENT_LABELS: Record<string, string> = {
+  planner:      "Planner Agent",
+  log_analyzer: "Log Analyzer Agent",
+  rag_searcher: "RAG Agent",
+  memory:       "Memory Agent",
+  reasoner:     "Reasoner Agent",
+  "Planner":      "Planner Agent",
+  "Log Analyzer": "Log Analyzer Agent",
+  "RAG Searcher": "RAG Agent",
+  "Memory":       "Memory Agent",
+  "Reasoner":     "Reasoner Agent",
+};
+const agentLabel = (name: string) => AGENT_LABELS[name] ?? name;
 
 function SeverityBadge({ severity }: { severity: string }) {
   return (
@@ -310,7 +329,7 @@ export default function DashboardPage() {
                     return (
                       <div key={idx} className="flex items-start gap-2 leading-relaxed">
                         <span className={`${color} font-bold`}>{icon}</span>
-                        <span className="text-gray-500">[{log.node}]</span>
+                        <span className="text-gray-500">[{agentLabel(log.node)}]</span>
                         <span className="text-gray-300">{log.message}</span>
                       </div>
                     );
@@ -322,68 +341,126 @@ export default function DashboardPage() {
 
             {result && (
               <div className="space-y-4">
-                <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-                  <div className="flex items-start justify-between mb-4">
-                    <div>
-                      <div className="flex items-center gap-3 mb-1">
+
+                {/* ── RCA Header ─────────────────────────────────────── */}
+                <div className={`border rounded-xl p-6 ${
+                  result.final_report.severity === "critical" ? "bg-red-950/20 border-red-900/40" :
+                  result.final_report.severity === "high"     ? "bg-orange-950/20 border-orange-900/40" :
+                  result.final_report.severity === "medium"   ? "bg-yellow-950/20 border-yellow-900/40" :
+                  "bg-gray-900 border-gray-800"
+                }`}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-2">
                         <SeverityBadge severity={result.final_report.severity} />
-                        <span className="text-gray-400 text-sm">{result.final_report.affected_service}</span>
+                        {result.final_report.root_cause_category && (
+                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-900/40 text-blue-300 border border-blue-800/50">
+                            {result.final_report.root_cause_category}
+                          </span>
+                        )}
+                        <span className="text-gray-400 text-sm font-mono">{result.final_report.affected_service}</span>
                       </div>
-                      <h3 className="text-lg font-semibold">{result.final_report.probable_cause}</h3>
+                      <h3 className="text-lg font-semibold text-white leading-snug">{result.final_report.probable_cause}</h3>
+                      {result.final_report.investigation_summary && (
+                        <p className="text-gray-400 text-sm mt-2 leading-relaxed">{result.final_report.investigation_summary}</p>
+                      )}
                     </div>
-                    <div className="text-right">
-                      <div className="text-2xl font-bold text-blue-400">{Math.round(result.final_report.confidence * 100)}%</div>
-                      <div className="text-xs text-gray-500">confidence</div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="text-3xl font-bold text-blue-400">{Math.round(result.final_report.confidence * 100)}%</div>
+                      <div className="text-xs text-gray-500 mt-0.5">confidence</div>
                     </div>
                   </div>
-                  <p className="text-gray-400 text-sm">{result.final_report.investigation_summary}</p>
+
+                  {/* Impact callout */}
+                  {result.final_report.impact && (
+                    <div className="mt-4 bg-gray-900/60 rounded-lg px-3 py-2.5 border border-gray-700/50">
+                      <p className="text-sm text-yellow-200/80">
+                        <span className="font-semibold text-yellow-400">Impact: </span>
+                        {result.final_report.impact}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Escalation banner */}
+                  {result.final_report.escalation && result.final_report.escalation !== "No escalation required" && (
+                    <div className="mt-2 bg-red-950/30 rounded-lg px-3 py-2.5 border border-red-900/40">
+                      <p className="text-sm text-red-200/80">
+                        <span className="font-semibold text-red-400">Escalation: </span>
+                        {result.final_report.escalation}
+                      </p>
+                    </div>
+                  )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                {/* ── Immediate Actions (full-width) ──────────────────── */}
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                  <h4 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block"></span>
+                    Immediate Actions
+                  </h4>
+                  <ol className="space-y-2">
+                    {result.final_report.immediate_actions.map((action, i) => (
+                      <li key={i} className="text-sm text-gray-400 flex gap-2.5 leading-relaxed">
+                        <span className="text-green-500 font-bold flex-shrink-0 tabular-nums">{i + 1}.</span>{action}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+
+                {/* ── Long-term Prevention ────────────────────────────── */}
+                {result.final_report.long_term_prevention && result.final_report.long_term_prevention.length > 0 && (
                   <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                    <h4 className="text-sm font-semibold text-gray-300 mb-3">Key Log Evidence</h4>
+                    <h4 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-purple-400 inline-block"></span>
+                      Long-term Prevention
+                    </h4>
                     <ul className="space-y-2">
-                      {result.final_report.evidence.map((item, i) => (
-                        <li key={i} className="text-sm text-gray-400 flex gap-2">
-                          <span className="text-blue-500 mt-0.5">›</span>{item}
+                      {result.final_report.long_term_prevention.map((item, i) => (
+                        <li key={i} className="text-sm text-gray-400 flex gap-2 leading-relaxed">
+                          <span className="text-purple-500 flex-shrink-0">◆</span>{item}
                         </li>
                       ))}
                     </ul>
                   </div>
-                  <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                    <h4 className="text-sm font-semibold text-gray-300 mb-3">Immediate Actions</h4>
-                    <ul className="space-y-2">
-                      {result.final_report.immediate_actions.map((action, i) => (
-                        <li key={i} className="text-sm text-gray-400 flex gap-2">
-                          <span className="text-green-500 font-bold mt-0.5">{i + 1}.</span>{action}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
+                )}
 
+                {/* ── Investigation Metadata ──────────────────────────── */}
                 <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
                   <h4 className="text-sm font-semibold text-gray-300 mb-3">Investigation Metadata</h4>
                   <div className="grid grid-cols-3 gap-4 text-sm">
                     <div>
-                      <div className="text-gray-500">Investigation ID</div>
-                      <div className="text-gray-300 font-mono text-xs mt-1">{result.investigation_id.slice(0, 8)}...</div>
+                      <div className="text-gray-500 text-xs mb-1">Investigation ID</div>
+                      <div className="text-gray-300 font-mono text-xs">{result.investigation_id.slice(0, 8)}...</div>
                     </div>
                     <div>
-                      <div className="text-gray-500">Agents Completed</div>
-                      <div className="text-green-400 mt-1">{result.tools_completed.join(", ")}</div>
+                      <div className="text-gray-500 text-xs mb-1">Agents Completed</div>
+                      <div className="text-green-400 text-xs">{result.tools_completed.map(agentLabel).join(" · ")}</div>
                     </div>
                     <div>
-                      <div className="text-gray-500">Similar Incidents</div>
-                      <div className="text-blue-400 mt-1">{result.similar_incidents_found} found</div>
+                      <div className="text-gray-500 text-xs mb-1">Similar Incidents</div>
+                      <div className="text-blue-400 text-xs">{result.similar_incidents_found} found in vector store</div>
                     </div>
                   </div>
                 </div>
 
+                {/* ── Collected Evidence (single unified panel) ────────── */}
                 {result.evidence_collected && result.evidence_collected.length > 0 && (
                   <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                    <h4 className="text-sm font-semibold text-gray-300 mb-3">Pipeline Diagnostic Evidence</h4>
-                    <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                    <h4 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block"></span>
+                      Collected Evidence
+                    </h4>
+                    <div className="space-y-0">
+                      {/* Synthesized findings first, with FINDING badge */}
+                      {result.final_report.evidence.map((item, idx) => (
+                        <div key={`f-${idx}`} className="flex items-start gap-2.5 text-xs py-1.5 border-b border-gray-800/40">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider flex-shrink-0 bg-blue-950/50 text-blue-400 border border-blue-900/50">
+                            FINDING
+                          </span>
+                          <span className="text-gray-300 leading-normal">{item}</span>
+                        </div>
+                      ))}
+                      {/* Raw pipeline evidence below */}
                       {result.evidence_collected.map((item, idx) => {
                         let badgeColor = "bg-gray-800 text-gray-400 border border-gray-700";
                         let label = "INFO";
@@ -412,7 +489,7 @@ export default function DashboardPage() {
                         }
 
                         return (
-                          <div key={idx} className="flex items-start gap-2.5 text-xs py-1.5 border-b border-gray-800/40 last:border-0">
+                          <div key={`e-${idx}`} className="flex items-start gap-2.5 text-xs py-1.5 border-b border-gray-800/40 last:border-0">
                             <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider flex-shrink-0 ${badgeColor}`}>
                               {label}
                             </span>
@@ -424,8 +501,7 @@ export default function DashboardPage() {
                   </div>
                 )}
 
-
-                {/* Evaluate Report button + inline scores */}
+                {/* ── Report Quality / Eval ────────────────────────────── */}
                 <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
                   <div className="flex items-center justify-between">
                     <div>
